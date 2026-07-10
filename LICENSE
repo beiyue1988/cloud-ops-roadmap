@@ -1,0 +1,9 @@
+cloud-ops-roadmap 双许可证说明
+
+除文件内另有明确声明外，本仓库的原创材料按以下范围授权：
+
+1. 原创 Markdown 正文、学习路线、学习说明、实验说明、项目说明和原创图表，采用 Creative Commons Attribution-ShareAlike 4.0 International（CC BY-SA 4.0）。规范链接和适用说明见 LICENSE-CONTENT。
+2. 原创 Shell、Python、YAML、Dockerfile、Terraform/OpenTofu、配置文件、其他代码文件和明确标记的代码片段，采用 Apache License, Version 2.0。完整许可文本见 LICENSE-CODE。
+3. 第三方代码、图片、商标、文档和其他材料保持其原有许可证与归属，不因进入本仓库而被上述许可证重新授权。第三方材料见 THIRD-PARTY-NOTICES.md 及材料自身的许可声明。
+
+当单个文件包含不同类别的材料时，以该文件内的明确许可标记为准；没有明确标记的第三方材料不得推定为本项目原创材料。
