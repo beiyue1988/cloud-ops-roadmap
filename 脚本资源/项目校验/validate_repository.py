@@ -537,20 +537,9 @@ def _is_local_link_target(raw_target: str) -> bool:
     return bool(target) and not lowered.startswith(("http://", "https://", "mailto:")) and not target.startswith("#")
 
 
-def _aggregate_repository_checked(root: Path) -> _RepositoryResult:
-    root = root.resolve(strict=False)
-    if not root.exists() or not root.is_dir():
-        error = Diagnostic(".", 0, "IO001", "仓库根目录不存在或不是目录").render()
-        return _RepositoryResult((error,), 0, 0, 0)
-
-    markdown_files = sorted(
-        (
-            path
-            for path in root.rglob("*.md")
-            if path.is_file() and ".git" not in path.relative_to(root).parts
-        ),
-        key=lambda path: path.relative_to(root).as_posix(),
-    )
+def _aggregate_repository_checked(
+    root: Path, markdown_files: list[Path]
+) -> _RepositoryResult:
     errors: list[str] = []
     chapters: dict[str, list[tuple[str, int]]] = {}
     knowledge_count = 0
@@ -613,9 +602,21 @@ def _root_path_error_result() -> _RepositoryResult:
 
 def _aggregate_repository(root: Path) -> _RepositoryResult:
     try:
-        return _aggregate_repository_checked(root)
+        root = root.resolve(strict=False)
+        if not root.exists() or not root.is_dir():
+            error = Diagnostic(".", 0, "IO001", "仓库根目录不存在或不是目录").render()
+            return _RepositoryResult((error,), 0, 0, 0)
+        markdown_files = sorted(
+            (
+                path
+                for path in root.rglob("*.md")
+                if path.is_file() and ".git" not in path.relative_to(root).parts
+            ),
+            key=lambda path: path.relative_to(root).as_posix(),
+        )
     except (OSError, ValueError):
         return _root_path_error_result()
+    return _aggregate_repository_checked(root, markdown_files)
 
 
 def validate_repository(root: Path) -> list[str]:
@@ -634,10 +635,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="校验 cloud-ops-roadmap Markdown 基础门禁")
     parser.add_argument("root", nargs="?", default=".", help="仓库根目录，默认当前目录")
     args = parser.parse_args(argv)
-    try:
-        result = _aggregate_repository(Path(args.root))
-    except (OSError, ValueError):
-        result = _root_path_error_result()
+    result = _aggregate_repository(Path(args.root))
     if result.errors:
         for error in result.errors:
             print(error, file=sys.stderr)

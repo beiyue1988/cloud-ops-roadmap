@@ -392,6 +392,48 @@ class RepositoryAndCliTests(RepositoryFixture):
         self.assertNotIn(sensitive_detail, stderr.getvalue())
         self.assertNotIn("Traceback", stdout.getvalue() + stderr.getvalue())
 
+    def test_validate_repository_does_not_swallow_non_path_value_error(self) -> None:
+        self.write_text("学习路线/入口.md", "# 合法内容\n")
+        marker = "content-value-error-marker"
+        with mock.patch.object(
+            validator, "validate_placeholders", side_effect=ValueError(marker)
+        ), self.assertRaisesRegex(ValueError, marker):
+            validator.validate_repository(self.root)
+
+    def test_main_does_not_swallow_non_path_value_error(self) -> None:
+        self.write_text("学习路线/入口.md", "# 合法内容\n")
+        marker = "main-content-value-error-marker"
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with mock.patch.object(
+            validator, "validate_placeholders", side_effect=ValueError(marker)
+        ), contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), self.assertRaisesRegex(
+            ValueError, marker
+        ):
+            validator.main([str(self.root)])
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertEqual(stderr.getvalue(), "")
+
+    def test_validate_repository_does_not_swallow_non_path_os_error(self) -> None:
+        self.write_text("学习路线/入口.md", "# 合法内容\n")
+        marker = "content-os-error-marker"
+        with mock.patch.object(
+            validator, "validate_placeholders", side_effect=OSError(marker)
+        ), self.assertRaisesRegex(OSError, marker):
+            validator.validate_repository(self.root)
+
+    def test_main_does_not_swallow_non_path_os_error(self) -> None:
+        self.write_text("学习路线/入口.md", "# 合法内容\n")
+        marker = "main-content-os-error-marker"
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with mock.patch.object(
+            validator, "validate_placeholders", side_effect=OSError(marker)
+        ), contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr), self.assertRaisesRegex(
+            OSError, marker
+        ):
+            validator.main([str(self.root)])
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertEqual(stderr.getvalue(), "")
+
     def test_current_repository_passes(self) -> None:
         repository_root = Path(__file__).resolve().parents[3]
         errors = validator.validate_repository(repository_root)
