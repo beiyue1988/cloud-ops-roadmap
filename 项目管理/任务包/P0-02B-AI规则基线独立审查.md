@@ -4,14 +4,21 @@
 
 - **任务编号：** P0-02B
 - **所属阶段：** Phase 0
-- **状态：** planned
+- **状态：** ready
 - **执行方式：** 独立新会话，只读审查；不得由 P0-02A 执行会话承担
 - **前置任务：** P0-02A `submitted`，且主会话将本任务状态更新为 `ready`
 - **制定者：** 主会话
 - **设计说明：** [AI-CODEX-RULES.md 设计说明](../执行计划/2026-07-11-AI-CODEX-RULES-设计说明.md)
 - **实施计划：** [AI-CODEX-RULES 规则基线实施计划](../执行计划/2026-07-11-AI-CODEX-RULES-实施计划.md)
 
-> 当前不得启动。本任务只有在 P0-02A 提交审查、主会话核对提交范围并把任务看板中的 P0-02B 改为 `ready` 后才能执行。
+> 本任务已于 2026-07-11 由主会话解锁。P0-02A 已提交审查，提交范围初审通过，任务看板中的 P0-02B 已进入 `ready`；现在可以交给未参与 P0-02A 的新会话执行。
+
+## 解锁记录
+
+- **P0-02A 规则提交：** `bd23ca178eba99fa207a483af9ba9e1386c596e0`
+- **P0-02A 报告提交：** `0c2b3761f0fb6737d963599874a4f7c971983537`
+- **主会话范围初审：** 规则提交 5 个文件、报告提交 1 个文件，均与白名单完全一致；规则 226 行、14 个主题、候选污染 0、失效链接 0、敏感信息 0、占位符 0；工作区干净。
+- **初审边界：** 只确认范围和机械门禁，不代表规则基线已接受；P0-02B 仍须独立复跑命令并完成人工语义审查。
 
 ## 新会话启动指令
 
@@ -39,7 +46,7 @@
 
 本任务原则上只读。唯一允许创建的文件是 项目管理/验收记录/P0-02B-独立审查报告.md。禁止修改 AI-CODEX-RULES.md、AGENTS.md、CODEX-PRD.md、README.md、项目记忆、任务看板、任务包、计划、执行报告或其他文件。所有报告修改必须使用 apply_patch。发现问题只记录证据和建议，不得顺手修复。
 
-启动时运行 git status --short --branch、git branch --show-current、git remote get-url origin，并检查任务看板中 P0-02A 为 submitted、P0-02B 为 ready。预期工作区干净、分支 main、远程正确、P0-02A 执行报告和 AI-CODEX-RULES.md 已存在。任一条件不符立即停止。
+启动时运行 git status --short --branch、git branch --show-current、git remote get-url origin，并检查任务看板中 P0-02A 为 submitted、P0-02B 为 ready。预期工作区干净、分支 main、远程正确、P0-02A 执行报告和 AI-CODEX-RULES.md 已存在。被审查的规则提交固定为 bd23ca178eba99fa207a483af9ba9e1386c596e0，报告提交固定为 0c2b3761f0fb6737d963599874a4f7c971983537；任一条件不符立即停止。
 
 你必须复跑规则行数、14 主题、必需词、禁止词、治理关键语句、相对链接、敏感信息、占位符和 git diff --check 检查；必须独立检查规则优先级、零基础教学、自适应结构、背景历史、可视化、真实性与来源、验证等级、安全成本、故障与面试内容，以及规则是否重复 PRD/模板/版本基线。不得因为命令退出 0 就跳过人工语义审查。
 
@@ -96,7 +103,7 @@
 3. P0-02B 在任务看板中为 `ready`；
 4. `AI-CODEX-RULES.md` 与 P0-02A 执行报告存在；
 5. 工作区干净；
-6. 主会话已经提供 P0-02A 规则提交和报告提交的完整哈希。
+6. P0-02A 规则提交为 `bd23ca178eba99fa207a483af9ba9e1386c596e0`，报告提交为 `0c2b3761f0fb6737d963599874a4f7c971983537`。
 
 缺少任一条件必须停止。
 
@@ -108,11 +115,9 @@
 git status --short --branch
 git branch --show-current
 git remote get-url origin
-git show --name-status --format=fuller <P0-02A规则提交完整哈希>
-git show --name-status --format=fuller <P0-02A报告提交完整哈希>
+git show --name-status --format=fuller bd23ca178eba99fa207a483af9ba9e1386c596e0
+git show --name-status --format=fuller 0c2b3761f0fb6737d963599874a4f7c971983537
 ```
-
-执行时把尖括号替换为主会话提供的真实完整哈希；不得把占位符写入报告。
 
 规则提交只能包含：
 
