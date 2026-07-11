@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "validate_repository.py"
@@ -152,6 +153,62 @@ class FrontMatterTests(RepositoryFixture):
         errors = validator.validate_front_matter(Path("知识库/文章.md"), text)
         self.assert_has_rule(errors, "FM008")
 
+    def test_front_matter_rejects_unclosed_double_quoted_scalar(self) -> None:
+        text = valid_article().replace('title: "测试章节"', 'title: "未闭合')
+        errors = validator.validate_front_matter(Path("知识库/文章.md"), text)
+        self.assertTrue(any(error.startswith("知识库/文章.md:2: FM008") for error in errors))
+
+    def test_front_matter_rejects_unclosed_single_quoted_scalar(self) -> None:
+        text = valid_article().replace('title: "测试章节"', "title: '未闭合")
+        errors = validator.validate_front_matter(Path("知识库/文章.md"), text)
+        self.assertTrue(any(error.startswith("知识库/文章.md:2: FM008") for error in errors))
+
+    def test_front_matter_rejects_mismatched_or_trailing_quoted_scalar(self) -> None:
+        cases = {
+            "mismatched_top_level": (
+                valid_article().replace('title: "测试章节"', 'title: "错配\''),
+                2,
+            ),
+            "trailing_top_level": (
+                valid_article().replace('title: "测试章节"', 'title: "闭合" trailing'),
+                2,
+            ),
+            "unclosed_list_item": (
+                valid_article().replace('  - "无"', '  - "未闭合', 1),
+                8,
+            ),
+            "trailing_versions_value": (
+                valid_article().replace(
+                    "versions: {}", 'versions:\n  rocky_linux: "9.8" trailing'
+                ),
+                16,
+            ),
+        }
+        for name, (text, line) in cases.items():
+            with self.subTest(name=name):
+                errors = validator.validate_front_matter(Path("知识库/文章.md"), text)
+                self.assertTrue(
+                    any(
+                        error.startswith(f"知识库/文章.md:{line}: FM008")
+                        for error in errors
+                    ),
+                    errors,
+                )
+
+    def test_front_matter_accepts_controlled_scalar_forms(self) -> None:
+        text = (
+            valid_article()
+            .replace('title: "测试章节"', "title: 测试章节")
+            .replace('chapter: "01.01"', "chapter: '01.01'")
+            .replace('  - "无"', "  - '无'", 1)
+            .replace(
+                "versions: {}", 'versions:\n  rocky_linux: "9.8"'
+            )
+        )
+        self.assertEqual(
+            validator.validate_front_matter(Path("知识库/文章.md"), text), []
+        )
+
     def test_duplicate_chapter_reports_both_files(self) -> None:
         self.write_text("知识库/01-基础/A.md", valid_article("01.01"))
         self.write_text("知识库/02-网络/B.md", valid_article("01.01"))
@@ -274,13 +331,14 @@ class RepositoryAndCliTests(RepositoryFixture):
         self.assertTrue(errors[0].startswith("坏文件.md:0:"))
 
     def test_errors_are_sorted_deterministically(self) -> None:
-        self.write_text("学习路线/B.md", "# B\n\nTODO\n")
-        self.write_text("学习路线/A.md", "# A\n\n\n\n\n\n\n\n\nTODO\n")
+        self.write_text("学习路线/A.md", "# A\nTODO\n" + "\n" * 7 + "TODO\n")
         first = validator.validate_repository(self.root)
         second = validator.validate_repository(self.root)
         self.assertEqual(first, second)
-        self.assertEqual(first, sorted(first, key=validator._error_sort_key))
-        self.assertTrue(first[0].startswith("学习路线/A.md:10: PH001"))
+        self.assertEqual(
+            [error.split(": PH001", 1)[0] for error in first],
+            ["学习路线/A.md:2", "学习路线/A.md:10"],
+        )
 
     def test_main_returns_zero_on_success(self) -> None:
         self.write_text("README.md", "# 合法仓库\n")
@@ -309,6 +367,30 @@ class RepositoryAndCliTests(RepositoryFixture):
         self.assertEqual(code, 1)
         self.assertIn(".:0: IO001", stderr.getvalue())
         self.assertNotIn("Traceback", stderr.getvalue())
+
+    def test_main_converts_invalid_root_path_to_io_error(self) -> None:
+        invalid_root = chr(0)
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            code = validator.main([invalid_root])
+        self.assertEqual(code, 1)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertIn(".:0: IO003", stderr.getvalue())
+        self.assertNotIn(invalid_root, stderr.getvalue())
+        self.assertNotIn("Traceback", stdout.getvalue() + stderr.getvalue())
+
+    def test_main_converts_root_resolution_os_error_to_io_error(self) -> None:
+        sensitive_detail = "".join(("private", "-root-detail"))
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with mock.patch.object(
+            validator.Path, "resolve", side_effect=OSError(sensitive_detail)
+        ), contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            code = validator.main([str(self.root)])
+        self.assertEqual(code, 1)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertIn(".:0: IO003", stderr.getvalue())
+        self.assertNotIn(sensitive_detail, stderr.getvalue())
+        self.assertNotIn("Traceback", stdout.getvalue() + stderr.getvalue())
 
     def test_current_repository_passes(self) -> None:
         repository_root = Path(__file__).resolve().parents[3]

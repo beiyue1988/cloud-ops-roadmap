@@ -120,11 +120,22 @@ def _display_path(path: Path) -> str:
     return path.as_posix()
 
 
-def _strip_scalar(value: str) -> str:
+def _parse_scalar(value: str) -> tuple[str, bool]:
     value = value.strip()
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
-        return value[1:-1]
-    return value
+    if not value:
+        return "", True
+    quotes = {'"', "'"}
+    if value[0] in quotes:
+        quote = value[0]
+        if len(value) < 2 or value[-1] != quote:
+            return value, False
+        inner = value[1:-1]
+        if quote in inner:
+            return value, False
+        return inner, True
+    if value[-1] in quotes or any(quote in value for quote in quotes):
+        return value, False
+    return value, True
 
 
 def _mask_fenced_code(text: str) -> str:
@@ -218,8 +229,15 @@ def _parse_front_matter(text: str) -> _FrontMatterResult:
                 result.values[key] = ""
                 result.kinds[key] = "unsupported"
             else:
-                result.values[key] = _strip_scalar(raw_value)
-                result.kinds[key] = "pending" if not raw_value else "scalar"
+                scalar, scalar_is_valid = _parse_scalar(raw_value)
+                result.values[key] = scalar
+                result.kinds[key] = (
+                    "pending" if not raw_value else "scalar" if scalar_is_valid else "unsupported"
+                )
+                if not scalar_is_valid:
+                    result.structure_errors.append(
+                        (line_number, f"键 {key} 包含不受支持的 quoted scalar")
+                    )
             continue
 
         if line.startswith("\t") or len(line) - len(line.lstrip(" ")) != 2:
@@ -231,16 +249,24 @@ def _parse_front_matter(text: str) -> _FrontMatterResult:
         list_match = LIST_ITEM_RE.fullmatch(line)
         map_match = MAP_ITEM_RE.fullmatch(line)
         if current_key in {"prerequisites", "objectives", "keywords"} and list_match:
-            item = _strip_scalar(list_match.group("value") or "")
+            item, item_is_valid = _parse_scalar(list_match.group("value") or "")
             if not item:
                 result.structure_errors.append((line_number, f"{current_key} 包含空列表项"))
+            if not item_is_valid:
+                result.structure_errors.append(
+                    (line_number, f"{current_key} 包含不受支持的 quoted scalar")
+                )
             blocks[current_key].append(line)
             result.values[current_key] = "\n".join(blocks[current_key])
             result.kinds[current_key] = "list"
         elif current_key == "versions" and map_match:
-            item_value = _strip_scalar(map_match.group("value") or "")
+            item_value, item_is_valid = _parse_scalar(map_match.group("value") or "")
             if not item_value:
                 result.structure_errors.append((line_number, "versions 包含空映射值"))
+            if not item_is_valid:
+                result.structure_errors.append(
+                    (line_number, "versions 包含不受支持的 quoted scalar")
+                )
             blocks[current_key].append(line)
             result.values[current_key] = "\n".join(blocks[current_key])
             result.kinds[current_key] = "map"
@@ -511,7 +537,7 @@ def _is_local_link_target(raw_target: str) -> bool:
     return bool(target) and not lowered.startswith(("http://", "https://", "mailto:")) and not target.startswith("#")
 
 
-def _aggregate_repository(root: Path) -> _RepositoryResult:
+def _aggregate_repository_checked(root: Path) -> _RepositoryResult:
     root = root.resolve(strict=False)
     if not root.exists() or not root.is_dir():
         error = Diagnostic(".", 0, "IO001", "仓库根目录不存在或不是目录").render()
@@ -580,6 +606,18 @@ def _aggregate_repository(root: Path) -> _RepositoryResult:
     return _RepositoryResult(ordered, len(markdown_files), knowledge_count, local_link_count)
 
 
+def _root_path_error_result() -> _RepositoryResult:
+    error = Diagnostic(".", 0, "IO003", "根路径解析或遍历失败").render()
+    return _RepositoryResult((error,), 0, 0, 0)
+
+
+def _aggregate_repository(root: Path) -> _RepositoryResult:
+    try:
+        return _aggregate_repository_checked(root)
+    except (OSError, ValueError):
+        return _root_path_error_result()
+
+
 def validate_repository(root: Path) -> list[str]:
     return list(_aggregate_repository(root).errors)
 
@@ -596,7 +634,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="校验 cloud-ops-roadmap Markdown 基础门禁")
     parser.add_argument("root", nargs="?", default=".", help="仓库根目录，默认当前目录")
     args = parser.parse_args(argv)
-    result = _aggregate_repository(Path(args.root))
+    try:
+        result = _aggregate_repository(Path(args.root))
+    except (OSError, ValueError):
+        result = _root_path_error_result()
     if result.errors:
         for error in result.errors:
             print(error, file=sys.stderr)
