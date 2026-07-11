@@ -14,6 +14,7 @@
 
 - [CODEX-PRD.md](CODEX-PRD.md)：项目范围、知识架构、质量门禁和版本策略。
 - [AGENTS.md](AGENTS.md)：主会话、执行会话和审查会话的职责边界。
+- [AI-CODEX-RULES.md](AI-CODEX-RULES.md)：内容类任务的研究、写作、可视化、安全和验证规则。
 - [项目管理/任务看板.md](项目管理/任务看板.md)：任务状态的唯一权威来源。
 
 ## 参与方式
