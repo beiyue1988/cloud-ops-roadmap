@@ -966,6 +966,38 @@ class OutlineGateTests(RepositoryFixture):
                 self.assertFalse(any(" OL002 " in error for error in errors), errors)
                 self.assertNotIn("Traceback", "\n".join(errors))
 
+    def test_catalogs_ignores_mixed_space_tab_indented_code_table(self) -> None:
+        self.build_catalogs()
+        real_table = controlled_table(STAGE_HEADERS, [self.stage_row(20)])
+        for prefix in (" \t", "  \t", "   \t"):
+            with self.subTest(prefix=repr(prefix)):
+                indented_table = "\n".join(
+                    prefix + line for line in real_table.splitlines()
+                )
+                self.write_text(
+                    f"知识库/{OUTLINE_STAGE_DIRECTORIES[20]}/README.md",
+                    "# 阶段\n\n## 章节清单\n\n" + indented_table + "\n",
+                )
+
+                errors = self.outline("catalogs")
+
+                self.assertEqual(sum(" OL001 " in error for error in errors), 1, errors)
+                self.assertFalse(any(" OL002 " in error for error in errors), errors)
+                self.assertNotIn("Traceback", "\n".join(errors))
+
+    def test_catalogs_accepts_real_table_with_up_to_three_spaces(self) -> None:
+        self.build_catalogs()
+        real_table = controlled_table(STAGE_HEADERS, [self.stage_row(20)])
+        for prefix in ("", " ", "  ", "   "):
+            with self.subTest(prefix=repr(prefix)):
+                table = "\n".join(prefix + line for line in real_table.splitlines())
+                self.write_text(
+                    f"知识库/{OUTLINE_STAGE_DIRECTORIES[20]}/README.md",
+                    "# 阶段\n\n## 章节清单\n\n" + table + "\n",
+                )
+
+                self.assertEqual(self.outline("catalogs"), [])
+
     def test_complete_rejects_attribute_bearing_html_break(self) -> None:
         self.build_complete()
         self.write_stage(

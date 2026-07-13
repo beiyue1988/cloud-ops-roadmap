@@ -334,7 +334,15 @@ def _mask_fenced_code(text: str) -> str:
 def _mask_outline_code(text: str) -> str:
     masked: list[str] = []
     for line in _mask_fenced_code(text).splitlines(keepends=True):
-        if line.startswith(("    ", "\t")):
+        column = 0
+        for character in line:
+            if character == " ":
+                column += 1
+            elif character == "\t":
+                column += 4 - (column % 4)
+            else:
+                break
+        if column >= 4:
             masked.append(_masked_code_line(line))
         else:
             masked.append(line)
