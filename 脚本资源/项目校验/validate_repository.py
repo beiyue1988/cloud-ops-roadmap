@@ -238,6 +238,7 @@ class _ControlledTable:
     path: str
     header_line: int
     rows: tuple[_TableRow, ...]
+    structure_valid: bool
 
 
 @dataclass(frozen=True)
@@ -268,6 +269,8 @@ class _OutlineState:
         default_factory=list
     )
     project_view_milestones_comparable: bool = False
+    invalid_project_numbers: set[int] = field(default_factory=set)
+    invalid_project_milestones: set[str] = field(default_factory=set)
 
 
 @dataclass(frozen=True)
@@ -317,12 +320,22 @@ def _mask_fenced_code(text: str) -> str:
         match = FENCE_RE.match(content)
         if active_char is None and match:
             fence = match.group("fence")
+            info = content[match.end("fence") :]
+            if fence[0] == "`" and "`" in info:
+                masked.append(line)
+                continue
             active_char, active_length = fence[0], len(fence)
             masked.append(_masked_code_line(line))
             continue
         if active_char is not None:
-            closing = content.lstrip()
-            if re.fullmatch(re.escape(active_char) + "{" + str(active_length) + ",}\\s*", closing):
+            closing_pattern = (
+                r" {0,3}"
+                + re.escape(active_char)
+                + "{"
+                + str(active_length)
+                + r",}[ \t]*"
+            )
+            if re.fullmatch(closing_pattern, content):
                 active_char = None
                 active_length = 0
             masked.append(_masked_code_line(line))
@@ -353,23 +366,57 @@ def _mask_inline_code(text: str) -> str:
     characters = list(text)
     index = 0
     while index < len(text):
-        if text[index] != "`":
-            index += 1
-            continue
-        run_end = index
+        run_start = text.find("`", index)
+        if run_start < 0:
+            break
+        run_end = run_start
         while run_end < len(text) and text[run_end] == "`":
             run_end += 1
-        delimiter = text[index:run_end]
-        closing = text.find(delimiter, run_end)
+        backslashes = 0
+        position = run_start - 1
+        while position >= 0 and text[position] == "\\":
+            backslashes += 1
+            position -= 1
+        if backslashes % 2 == 1:
+            index = run_end
+            continue
+        delimiter_length = run_end - run_start
+        search = run_end
+        closing = -1
+        closing_end = -1
+        while search < len(text):
+            candidate = text.find("`", search)
+            if candidate < 0:
+                break
+            candidate_end = candidate
+            while candidate_end < len(text) and text[candidate_end] == "`":
+                candidate_end += 1
+            if candidate_end - candidate == delimiter_length:
+                closing = candidate
+                closing_end = candidate_end
+                break
+            search = candidate_end
         if closing < 0:
             index = run_end
             continue
-        span_end = closing + len(delimiter)
-        for position in range(index, span_end):
+        for position in range(run_start, closing_end):
             if characters[position] not in {"\r", "\n"}:
                 characters[position] = " "
-        index = span_end
+        index = closing_end
     return "".join(characters)
+
+
+def _contains_html_break(text: str) -> bool:
+    masked = _mask_inline_code(text)
+    for match in HTML_BREAK_RE.finditer(masked):
+        backslashes = 0
+        position = match.start() - 1
+        while position >= 0 and masked[position] == "\\":
+            backslashes += 1
+            position -= 1
+        if backslashes % 2 == 0:
+            return True
+    return False
 
 
 def _parse_front_matter(text: str) -> _FrontMatterResult:
@@ -863,8 +910,9 @@ def _parse_controlled_table(
         return None
 
     rows: list[_TableRow] = []
+    structure_valid = True
     index = separator_index + 1
-    while index < stop and lines[index].lstrip().startswith("|"):
+    while index < stop and lines[index].strip():
         cells = _split_table_cells(lines[index])
         if cells is None or len(cells) != len(expected_headers):
             _add_outline_error(
@@ -874,19 +922,23 @@ def _parse_controlled_table(
                 "OL002",
                 "受控表格数据行列数或边界非法",
             )
+            structure_valid = False
         else:
             rows.append(_TableRow(cells, index + 1))
         index += 1
     if not rows:
-        _add_outline_error(
-            state,
-            relative,
-            header_index + 1,
-            "OL002",
-            "受控表格至少需要一行数据",
-        )
-        return None
-    return _ControlledTable(relative, header_index + 1, tuple(rows))
+        if structure_valid:
+            _add_outline_error(
+                state,
+                relative,
+                header_index + 1,
+                "OL002",
+                "受控表格至少需要一行数据",
+            )
+        structure_valid = False
+    return _ControlledTable(
+        relative, header_index + 1, tuple(rows), structure_valid
+    )
 
 
 def _load_controlled_table(
@@ -978,9 +1030,9 @@ def _parse_stage_table(
                 f"预定文件与章节 ID {chapter_id} 不对齐",
             )
 
-        if not cells[2] or HTML_BREAK_RE.search(cells[2]):
+        if not cells[2] or _contains_html_break(cells[2]):
             _add_outline_error(state, table.path, row.line, "OL005", "标题必须为单行非空文本")
-        if not cells[3] or HTML_BREAK_RE.search(cells[3]):
+        if not cells[3] or _contains_html_break(cells[3]):
             _add_outline_error(
                 state, table.path, row.line, "OL005", "主要目标必须为单行非空文本"
             )
@@ -1079,52 +1131,73 @@ def _load_stage_catalog(
         end=end,
         required=True,
     )
-    if table is not None:
+    if table is not None and table.structure_valid:
         _parse_stage_table(table, stage, state)
 
 
 def _catalog_cycles(graph: dict[str, tuple[str, ...]]) -> list[tuple[str, ...]]:
-    colors: dict[str, int] = {}
-    path: list[str] = []
-    positions: dict[str, int] = {}
-    cycles: set[tuple[str, ...]] = set()
     adjacency = {
         chapter_id: tuple(
-            prerequisite
-            for prerequisite in sorted(prerequisites)
-            if prerequisite in graph
+            sorted(
+                {
+                    prerequisite
+                    for prerequisite in prerequisites
+                    if prerequisite in graph
+                }
+            )
         )
-        for chapter_id, prerequisites in graph.items()
+        for chapter_id, prerequisites in sorted(graph.items())
+    }
+    reverse_lists: dict[str, list[str]] = {
+        chapter_id: [] for chapter_id in adjacency
+    }
+    for chapter_id, prerequisites in adjacency.items():
+        for prerequisite in prerequisites:
+            reverse_lists[prerequisite].append(chapter_id)
+    reverse = {
+        chapter_id: tuple(neighbors)
+        for chapter_id, neighbors in reverse_lists.items()
     }
 
-    for chapter_id in sorted(graph):
-        if colors.get(chapter_id, 0) != 0:
+    visited: set[str] = set()
+    finish_order: list[str] = []
+    for chapter_id in adjacency:
+        if chapter_id in visited:
             continue
-        colors[chapter_id] = 1
-        positions[chapter_id] = len(path)
-        path.append(chapter_id)
+        visited.add(chapter_id)
         frames: list[tuple[str, int]] = [(chapter_id, 0)]
         while frames:
             current, next_index = frames[-1]
             neighbors = adjacency[current]
             if next_index >= len(neighbors):
                 frames.pop()
-                path.pop()
-                positions.pop(current)
-                colors[current] = 2
+                finish_order.append(current)
                 continue
-            prerequisite = neighbors[next_index]
             frames[-1] = (current, next_index + 1)
-            color = colors.get(prerequisite, 0)
-            if color == 0:
-                colors[prerequisite] = 1
-                positions[prerequisite] = len(path)
-                path.append(prerequisite)
-                frames.append((prerequisite, 0))
-            elif color == 1:
-                start = positions[prerequisite]
-                cycles.add(tuple(sorted(path[start:])))
-    return sorted(cycles)
+            neighbor = neighbors[next_index]
+            if neighbor not in visited:
+                visited.add(neighbor)
+                frames.append((neighbor, 0))
+
+    assigned: set[str] = set()
+    components: list[tuple[str, ...]] = []
+    for chapter_id in reversed(finish_order):
+        if chapter_id in assigned:
+            continue
+        assigned.add(chapter_id)
+        members: list[str] = []
+        pending = [chapter_id]
+        while pending:
+            current = pending.pop()
+            members.append(current)
+            for neighbor in reversed(reverse[current]):
+                if neighbor not in assigned:
+                    assigned.add(neighbor)
+                    pending.append(neighbor)
+        component = tuple(sorted(members))
+        if len(component) > 1 or component[0] in adjacency[component[0]]:
+            components.append(component)
+    return sorted(components)
 
 
 def _finalize_catalogs(state: _OutlineState) -> None:
@@ -1192,7 +1265,7 @@ def _finalize_catalogs(state: _OutlineState) -> None:
             location.path,
             location.line,
             "OL007",
-            "章节依赖存在循环：" + " -> ".join(cycle + (cycle[0],)),
+            "章节依赖存在循环分量：" + ", ".join(cycle),
         )
 
     for chapter in sorted(state.chapters.values(), key=lambda item: item.chapter_id):
@@ -1229,7 +1302,7 @@ def _parse_view_chapters(
     state: _OutlineState,
     *,
     allow_empty: bool = True,
-) -> tuple[str, ...]:
+) -> tuple[tuple[str, ...], bool]:
     chapters = _parse_controlled_list(value, OUTLINE_ID_RE)
     if chapters is None or (not allow_empty and not chapters):
         _add_outline_error(
@@ -1239,7 +1312,7 @@ def _parse_view_chapters(
             "OL002",
             "章节引用必须为 — 或逗号加空格分隔的反引号章节 ID",
         )
-        return ()
+        return (), False
     state.view_reference_count += len(chapters)
     if len(set(chapters)) != len(chapters):
         _add_outline_error(state, path, line, "OL012", "同一单元格包含重复章节 ID")
@@ -1248,7 +1321,7 @@ def _parse_view_chapters(
             _add_outline_error(
                 state, path, line, "OL008", f"派生视图引用不存在章节 {chapter_id}"
             )
-    return chapters
+    return chapters, True
 
 
 def _parse_view_anchors(
@@ -1270,7 +1343,7 @@ def _parse_view_anchors(
 def _require_text(
     value: str, path: str, line: int, state: _OutlineState, field_name: str
 ) -> None:
-    if not value or HTML_BREAK_RE.search(value):
+    if not value or _contains_html_break(value):
         _add_outline_error(
             state, path, line, "OL002", f"{field_name} 必须为单行非空文本"
         )
@@ -1320,8 +1393,8 @@ def _validate_route_table(
                     "OL009",
                     f"周次行顺序应为第 {position} 周",
                 )
-        main = _parse_view_chapters(row.cells[1], table.path, row.line, state)
-        optional = _parse_view_chapters(row.cells[2], table.path, row.line, state)
+        main, _ = _parse_view_chapters(row.cells[1], table.path, row.line, state)
+        optional, _ = _parse_view_chapters(row.cells[2], table.path, row.line, state)
         mainline.extend((chapter_id, row.line) for chapter_id in main)
         flexible.extend((chapter_id, row.line) for chapter_id in optional)
         _require_text(row.cells[3], table.path, row.line, state, "阶段成果")
@@ -1417,7 +1490,9 @@ def _validate_career_table(table: _ControlledTable, state: _OutlineState) -> Non
         if key in keys:
             _add_outline_error(state, table.path, row.line, "OL012", "职业路线能力项重复")
         keys.add(key)
-        _parse_view_chapters(row.cells[2], table.path, row.line, state, allow_empty=False)
+        _parse_view_chapters(
+            row.cells[2], table.path, row.line, state, allow_empty=False
+        )
         _require_text(row.cells[3], table.path, row.line, state, "阶段成果")
         _parse_view_anchors(row.cells[4], table.path, row.line, state)
 
@@ -1425,10 +1500,10 @@ def _validate_career_table(table: _ControlledTable, state: _OutlineState) -> Non
 def _validate_dependency_table(table: _ControlledTable, state: _OutlineState) -> None:
     seen: set[str] = set()
     for row in table.rows:
-        later = _parse_view_chapters(
+        later, _ = _parse_view_chapters(
             row.cells[0], table.path, row.line, state, allow_empty=False
         )
-        prerequisites = _parse_view_chapters(
+        prerequisites, _ = _parse_view_chapters(
             row.cells[1], table.path, row.line, state, allow_empty=False
         )
         _require_text(row.cells[2], table.path, row.line, state, "关系说明")
@@ -1501,7 +1576,7 @@ def _validate_wave_three_views(
         table = _load_controlled_table(
             root, relative, headers, state, required=required
         )
-        if table is None:
+        if table is None or not table.structure_valid:
             continue
         if relative == "学习路线/02-三个月就业路线.md":
             _validate_route_table(table, state, strict=strict)
@@ -1550,14 +1625,16 @@ def _validate_project_view(table: _ControlledTable, state: _OutlineState) -> boo
                 _add_outline_error(
                     state, table.path, row.line, "OL012", "项目演进视图里程碑重复"
                 )
+                milestones_comparable = False
             seen.add(milestone)
-        chapters = set(
-            _parse_view_chapters(
-                row.cells[2], table.path, row.line, state, allow_empty=False
-            )
+        parsed_chapters, chapters_valid = _parse_view_chapters(
+            row.cells[2], table.path, row.line, state, allow_empty=False
         )
+        chapters = set(parsed_chapters)
+        if not chapters_valid:
+            milestones_comparable = False
         _require_text(row.cells[3], table.path, row.line, state, "证据类型")
-        if milestone is not None:
+        if milestone is not None and chapters_valid:
             state.project_view_records.append(
                 (milestone, chapters, table.path, row.line)
             )
@@ -1664,12 +1741,13 @@ def _validate_project_table(
             else None
         )
         expected = f"PRJ-{project:02d}-M{position:02d}"
+        milestone_valid = milestone == expected
         if milestone is None:
             _add_outline_error(
                 state, table.path, row.line, "OL010", "项目里程碑必须为反引号 PRJ-NN-MCC"
             )
         else:
-            if milestone != expected:
+            if not milestone_valid:
                 _add_outline_error(
                     state,
                     table.path,
@@ -1679,16 +1757,19 @@ def _validate_project_table(
                 )
             _record_anchor_definition(milestone, table.path, row.line, state)
         _require_text(row.cells[1], table.path, row.line, state, "能力结果")
-        chapters = set(
-            _parse_view_chapters(
-                row.cells[2], table.path, row.line, state, allow_empty=False
-            )
+        parsed_chapters, chapters_valid = _parse_view_chapters(
+            row.cells[2], table.path, row.line, state, allow_empty=False
         )
+        chapters = set(parsed_chapters)
         _require_text(row.cells[3], table.path, row.line, state, "证据类型")
         _require_text(row.cells[4], table.path, row.line, state, "未来内容归属")
-        if milestone is not None:
+        if milestone_valid and chapters_valid and milestone is not None:
             state.project_mappings[milestone] = chapters
             state.project_locations[milestone] = (table.path, row.line)
+        elif milestone_valid and milestone is not None:
+            state.invalid_project_milestones.add(milestone)
+        else:
+            state.invalid_project_numbers.add(project)
 
 
 def _validate_projects(root: Path, state: _OutlineState, *, required: bool) -> None:
@@ -1699,13 +1780,27 @@ def _validate_projects(root: Path, state: _OutlineState, *, required: bool) -> N
         table = _load_controlled_table(
             root, relative, PROJECT_HEADERS, state, required=required
         )
-        if table is not None:
+        if table is not None and table.structure_valid:
             _validate_project_table(table, project, state)
+        elif required or table is not None:
+            state.invalid_project_numbers.add(project)
+
+
+def _project_anchor_is_qualified(anchor: str, state: _OutlineState) -> bool:
+    if not anchor.startswith("PRJ-"):
+        return True
+    match = re.match(r"PRJ-(\d{2})-", anchor)
+    if match is not None and int(match.group(1)) in state.invalid_project_numbers:
+        return False
+    return anchor not in state.invalid_project_milestones
 
 
 def _validate_anchor_and_project_closure(state: _OutlineState) -> None:
     for anchor, path, line in state.anchor_references:
-        if anchor not in state.anchor_definitions:
+        if (
+            _project_anchor_is_qualified(anchor, state)
+            and anchor not in state.anchor_definitions
+        ):
             _add_outline_error(
                 state, path, line, "OL010", f"引用的实践锚点 {anchor} 不存在"
             )
@@ -1726,6 +1821,8 @@ def _validate_anchor_and_project_closure(state: _OutlineState) -> None:
         for milestone in sorted(
             anchor for anchor in chapter.anchors if anchor.startswith("PRJ-")
         ):
+            if not _project_anchor_is_qualified(milestone, state):
+                continue
             if chapter.chapter_id not in state.project_mappings.get(milestone, set()):
                 _add_outline_error(
                     state,
@@ -1734,7 +1831,11 @@ def _validate_anchor_and_project_closure(state: _OutlineState) -> None:
                     "OL011",
                     f"章节引用 {milestone}，但项目未列回章节 {chapter.chapter_id}",
                 )
-    if state.project_view_milestones_comparable:
+    if (
+        state.project_view_milestones_comparable
+        and not state.invalid_project_numbers
+        and not state.invalid_project_milestones
+    ):
         view_milestones = {
             milestone for milestone, _, _, _ in state.project_view_records
         }
@@ -1748,6 +1849,8 @@ def _validate_anchor_and_project_closure(state: _OutlineState) -> None:
                 f"项目里程碑 {milestone} 未出现在贯穿项目视图",
             )
     for milestone, chapters, path, line in state.project_view_records:
+        if not _project_anchor_is_qualified(milestone, state):
+            continue
         mapping = state.project_mappings.get(milestone)
         if mapping is not None and chapters != mapping:
             _add_outline_error(
@@ -1767,12 +1870,12 @@ def _validate_partial_auxiliary_tables(root: Path, state: _OutlineState) -> None
         state,
         required=False,
     )
-    if project_view is not None:
+    if project_view is not None and project_view.structure_valid:
         _validate_project_view(project_view, state)
     checkpoint = _load_controlled_table(
         root, CHECKPOINT_PATH, CHECKPOINT_HEADERS, state, required=False
     )
-    if checkpoint is not None:
+    if checkpoint is not None and checkpoint.structure_valid:
         _validate_checkpoint_table(checkpoint, state, require_all=False)
     _validate_projects(root, state, required=False)
 
@@ -1785,14 +1888,14 @@ def _validate_complete(root: Path, state: _OutlineState) -> None:
         state,
         required=True,
     )
-    if project_view is not None:
+    if project_view is not None and project_view.structure_valid:
         state.project_view_milestones_comparable = _validate_project_view(
             project_view, state
         )
     checkpoint = _load_controlled_table(
         root, CHECKPOINT_PATH, CHECKPOINT_HEADERS, state, required=True
     )
-    if checkpoint is not None:
+    if checkpoint is not None and checkpoint.structure_valid:
         _validate_checkpoint_table(checkpoint, state, require_all=True)
     _validate_labs(root, state)
     _validate_projects(root, state, required=True)

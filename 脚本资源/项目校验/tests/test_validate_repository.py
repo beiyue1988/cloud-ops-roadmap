@@ -998,6 +998,258 @@ class OutlineGateTests(RepositoryFixture):
 
                 self.assertEqual(self.outline("catalogs"), [])
 
+    def test_catalogs_keeps_table_masked_after_indented_pseudo_closing_fence(
+        self,
+    ) -> None:
+        self.build_catalogs()
+        real_table = controlled_table(STAGE_HEADERS, [self.stage_row(20)])
+        relative = f"知识库/{OUTLINE_STAGE_DIRECTORIES[20]}/README.md"
+        for prefix in ("    ", "\t", " \t"):
+            with self.subTest(prefix=repr(prefix)):
+                self.write_text(
+                    relative,
+                    "# 阶段\n\n## 章节清单\n\n```markdown\n"
+                    + prefix
+                    + "```\n"
+                    + real_table
+                    + "```\n",
+                )
+
+                errors = self.outline("catalogs")
+
+                self.assertEqual(sum(" OL001 " in error for error in errors), 1, errors)
+                self.assertFalse(any(" OL002 " in error for error in errors), errors)
+                self.assertNotIn("Traceback", "\n".join(errors))
+
+    def test_catalogs_accepts_table_after_valid_closing_fence_indent(self) -> None:
+        self.build_catalogs()
+        real_table = controlled_table(STAGE_HEADERS, [self.stage_row(20)])
+        relative = f"知识库/{OUTLINE_STAGE_DIRECTORIES[20]}/README.md"
+        for prefix in ("", " ", "  ", "   "):
+            with self.subTest(prefix=repr(prefix)):
+                self.write_text(
+                    relative,
+                    "# 阶段\n\n## 章节清单\n\n```markdown\n示例\n"
+                    + prefix
+                    + "```\n"
+                    + real_table,
+                )
+
+                self.assertEqual(self.outline("catalogs"), [])
+
+    def test_catalogs_does_not_open_backtick_fence_with_backtick_info(self) -> None:
+        self.build_catalogs()
+        real_table = controlled_table(STAGE_HEADERS, [self.stage_row(20)])
+        self.write_text(
+            f"知识库/{OUTLINE_STAGE_DIRECTORIES[20]}/README.md",
+            "# 阶段\n\n## 章节清单\n\n```bad`info\n" + real_table,
+        )
+
+        self.assertEqual(self.outline("catalogs"), [])
+
+    def test_complete_malformed_project_view_rows_emit_only_direct_errors(
+        self,
+    ) -> None:
+        def mutate(text: str, kind: str) -> str:
+            lines = text.splitlines(keepends=True)
+            for index, line in enumerate(lines):
+                if "`PRJ-02-M01`" not in line:
+                    continue
+                body = line.rstrip("\r\n")
+                ending = line[len(body) :]
+                if kind == "missing-leading":
+                    body = body[1:]
+                elif kind == "missing-trailing":
+                    body = body[:-1]
+                else:
+                    body = body[:-1] + "| 多余 |"
+                lines[index] = body + ending
+                break
+            return "".join(lines)
+
+        for kind in ("missing-leading", "missing-trailing", "extra-column"):
+            with self.subTest(kind=kind):
+                self.build_complete()
+                path = self.root / "学习路线/06-贯穿项目演进线.md"
+                path.write_text(mutate(path.read_text("utf-8"), kind), encoding="utf-8")
+
+                errors = self.outline("complete")
+
+                self.assertTrue(errors, "结构错误必须产生直接 OL002")
+                self.assertTrue(all(" OL002 " in error for error in errors), errors)
+
+    def test_complete_malformed_project_mapping_rows_emit_only_direct_errors(
+        self,
+    ) -> None:
+        def mutate(text: str, kind: str) -> str:
+            lines = text.splitlines(keepends=True)
+            for index, line in enumerate(lines):
+                if "`PRJ-01-M01`" not in line:
+                    continue
+                body = line.rstrip("\r\n")
+                ending = line[len(body) :]
+                if kind == "missing-leading":
+                    body = body[1:]
+                elif kind == "missing-trailing":
+                    body = body[:-1]
+                else:
+                    body = body[:-1] + "| 多余 |"
+                lines[index] = body + ending
+                break
+            return "".join(lines)
+
+        for kind in ("missing-leading", "missing-trailing", "extra-column"):
+            with self.subTest(kind=kind):
+                self.build_complete()
+                path = self.root / "项目实战/01-若依传统部署/README.md"
+                path.write_text(mutate(path.read_text("utf-8"), kind), encoding="utf-8")
+
+                errors = self.outline("complete")
+
+                self.assertTrue(errors, "结构错误必须产生直接 OL002")
+                self.assertTrue(all(" OL002 " in error for error in errors), errors)
+
+    def test_complete_blank_line_terminates_controlled_table_before_prose(self) -> None:
+        self.build_complete()
+        path = self.root / "学习路线/06-贯穿项目演进线.md"
+        path.write_text(
+            path.read_text("utf-8") + "\n说明文字 | 可以包含 | 竖线\n",
+            encoding="utf-8",
+        )
+
+        self.assertEqual(self.outline("complete"), [])
+
+    def test_complete_invalid_project_view_chapters_do_not_emit_ol011(self) -> None:
+        self.build_complete()
+        path = self.root / "学习路线/06-贯穿项目演进线.md"
+        path.write_text(
+            path.read_text("utf-8").replace("`09.01`", "09.01", 1),
+            encoding="utf-8",
+        )
+
+        errors = self.outline("complete")
+
+        self.assertEqual(sum(" OL002 " in error for error in errors), 1, errors)
+        self.assertFalse(any(" OL011 " in error for error in errors), errors)
+
+    def test_complete_invalid_project_mapping_chapters_do_not_emit_ol011(self) -> None:
+        self.build_complete()
+        path = self.root / "项目实战/01-若依传统部署/README.md"
+        path.write_text(
+            path.read_text("utf-8").replace("`09.01`", "09.01", 1),
+            encoding="utf-8",
+        )
+
+        errors = self.outline("complete")
+
+        self.assertEqual(sum(" OL002 " in error for error in errors), 1, errors)
+        self.assertFalse(any(" OL011 " in error for error in errors), errors)
+
+    def test_complete_allows_html_break_literal_in_inline_code(self) -> None:
+        for delimiter in ("`", "``", "```"):
+            with self.subTest(delimiter=delimiter):
+                self.build_complete()
+                self.write_stage(
+                    0,
+                    [
+                        self.stage_row(
+                            0, title=f"测试 {delimiter}<br>{delimiter} 章节"
+                        )
+                    ],
+                )
+                self.write_text(
+                    "学习路线/03-职业发展路线.md",
+                    "# 职业发展路线\n\n"
+                    + controlled_table(
+                        ("能力层级", "岗位方向", "章节 ID", "阶段成果", "项目锚点"),
+                        [
+                            [
+                                "入门",
+                                "Linux 运维",
+                                "`00.01`, `01.01`",
+                                f"完成 {delimiter}<br>{delimiter} 结果",
+                                "—",
+                            ]
+                        ],
+                    ),
+                )
+
+                self.assertEqual(self.outline("complete"), [])
+
+    def test_complete_allows_odd_escaped_html_break_literal(self) -> None:
+        self.build_complete()
+        self.write_stage(0, [self.stage_row(0, title=r"测试 \<br> 章节")])
+        self.write_text(
+            "学习路线/03-职业发展路线.md",
+            "# 职业发展路线\n\n"
+            + controlled_table(
+                ("能力层级", "岗位方向", "章节 ID", "阶段成果", "项目锚点"),
+                [["入门", "Linux 运维", "`00.01`, `01.01`", r"完成 \<br> 结果", "—"]],
+            ),
+        )
+
+        self.assertEqual(self.outline("complete"), [])
+
+    def test_complete_rejects_raw_and_even_escaped_html_break(self) -> None:
+        for label, title, result in (
+            ("raw", "测试 <br> 章节", "完成 <br> 结果"),
+            ("even-escaped", r"测试 \\<br> 章节", r"完成 \\<br> 结果"),
+            (
+                "escaped-code-opener",
+                r"测试 \`<br>` 章节",
+                r"完成 \`<br>` 结果",
+            ),
+        ):
+            with self.subTest(label=label):
+                self.build_complete()
+                self.write_stage(0, [self.stage_row(0, title=title)])
+                self.write_text(
+                    "学习路线/03-职业发展路线.md",
+                    "# 职业发展路线\n\n"
+                    + controlled_table(
+                        ("能力层级", "岗位方向", "章节 ID", "阶段成果", "项目锚点"),
+                        [["入门", "Linux 运维", "`00.01`, `01.01`", result, "—"]],
+                    ),
+                )
+
+                errors = self.outline("complete")
+
+                self.assert_has_rule(errors, "OL005")
+                self.assert_has_rule(errors, "OL002")
+
+    def test_catalog_cycles_collapses_dense_strong_component(self) -> None:
+        nodes = tuple(f"N{index:03d}" for index in range(100))
+        graph = {
+            node: tuple(other for other in nodes if other != node) for node in nodes
+        }
+
+        first = validator._catalog_cycles(graph)
+        second = validator._catalog_cycles(graph)
+
+        self.assertEqual(first, second)
+        self.assertEqual(len(first), 1, first)
+        self.assertEqual(len(first[0]), 100)
+        self.assertEqual(set(first[0]), set(nodes))
+
+    def test_catalogs_reports_cycle_component_without_fabricated_path(self) -> None:
+        self.write_stage(
+            0,
+            [
+                self.stage_row(0, 1, prerequisites="`00.03`"),
+                self.stage_row(0, 2, prerequisites="`00.01`"),
+                self.stage_row(0, 3, prerequisites="`00.02`"),
+            ],
+        )
+
+        errors = self.outline("partial")
+        cycles = [error for error in errors if " OL007 " in error]
+
+        self.assertEqual(len(cycles), 1, errors)
+        self.assertIn("循环分量", cycles[0])
+        self.assertNotIn(" -> ", cycles[0])
+        for chapter_id in ("00.01", "00.02", "00.03"):
+            self.assertIn(chapter_id, cycles[0])
+
     def test_complete_rejects_attribute_bearing_html_break(self) -> None:
         self.build_complete()
         self.write_stage(
