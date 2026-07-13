@@ -917,6 +917,178 @@ class OutlineGateTests(RepositoryFixture):
         self.build_complete()
         self.assertEqual(self.outline("complete"), [])
 
+    def test_complete_rejects_all_controlled_tables_inside_fences(self) -> None:
+        self.build_complete()
+        for path in sorted(self.root.rglob("*.md")):
+            original = path.read_text(encoding="utf-8")
+            path.write_text(
+                f"```markdown\n{original.rstrip()}\n```\n",
+                encoding="utf-8",
+            )
+
+        errors = self.outline("complete")
+
+        self.assert_has_rule(errors, "OL001")
+        self.assertNotIn("Traceback", "\n".join(errors))
+
+    def test_partial_skips_fenced_example_before_real_stage_table(self) -> None:
+        fenced_example = (
+            "```markdown\n"
+            + controlled_table(("示例列",), [["不是正式章节表"]])
+            + "```\n"
+        )
+        self.write_text(
+            f"知识库/{OUTLINE_STAGE_DIRECTORIES[0]}/README.md",
+            "# 阶段\n\n## 章节清单\n\n"
+            + fenced_example
+            + "\n"
+            + controlled_table(STAGE_HEADERS, [self.stage_row(0)]),
+        )
+
+        self.assertEqual(self.outline("partial"), [])
+
+    def test_catalogs_ignores_indented_code_table(self) -> None:
+        self.build_catalogs()
+        real_table = controlled_table(STAGE_HEADERS, [self.stage_row(20)])
+        for indent in ("    ", "\t"):
+            with self.subTest(indent=repr(indent)):
+                indented_table = "\n".join(
+                    indent + line for line in real_table.splitlines()
+                )
+                self.write_text(
+                    f"知识库/{OUTLINE_STAGE_DIRECTORIES[20]}/README.md",
+                    "# 阶段\n\n## 章节清单\n\n" + indented_table + "\n",
+                )
+
+                errors = self.outline("catalogs")
+
+                self.assertEqual(sum(" OL001 " in error for error in errors), 1, errors)
+                self.assertFalse(any(" OL002 " in error for error in errors), errors)
+                self.assertNotIn("Traceback", "\n".join(errors))
+
+    def test_complete_rejects_attribute_bearing_html_break(self) -> None:
+        self.build_complete()
+        self.write_stage(
+            0,
+            [self.stage_row(0, title='测试<br class="x">章节')],
+        )
+
+        errors = self.outline("complete")
+
+        self.assert_has_rule(errors, "OL005")
+        self.assertTrue(any("标题" in error for error in errors), errors)
+        self.assertNotIn("Traceback", "\n".join(errors))
+
+    def test_complete_rejects_case_and_whitespace_html_break_variants(
+        self,
+    ) -> None:
+        self.build_complete()
+        variants = ('完成<BR data-x="1" />结果', '完成<br data-x = "1"    >结果')
+        for value in variants:
+            with self.subTest(value=value):
+                self.write_text(
+                    "学习路线/03-职业发展路线.md",
+                    "# 职业发展路线\n\n"
+                    + controlled_table(
+                        ("能力层级", "岗位方向", "章节 ID", "阶段成果", "项目锚点"),
+                        [["入门", "Linux 运维", "`00.01`, `01.01`", value, "—"]],
+                    ),
+                )
+
+                errors = self.outline("complete")
+
+                self.assert_has_rule(errors, "OL002")
+                self.assertTrue(any("阶段成果" in error for error in errors), errors)
+                self.assertNotIn("Traceback", "\n".join(errors))
+
+        self.write_text(
+            "学习路线/03-职业发展路线.md",
+            "# 职业发展路线\n\n"
+            + controlled_table(
+                ("能力层级", "岗位方向", "章节 ID", "阶段成果", "项目锚点"),
+                [["入门", "Linux 运维", "`00.01`, `01.01`", "普通 br 与 <bracket> 文本", "—"]],
+            ),
+        )
+        self.assertEqual(self.outline("complete"), [])
+
+    def test_catalogs_handles_graph_deeper_than_recursion_limit(self) -> None:
+        identifiers = [
+            f"{stage:02d}.{chapter:02d}"
+            for stage in range(11)
+            for chapter in range(1, 100)
+        ]
+        for stage in range(11):
+            rows: list[list[str]] = []
+            for chapter in range(1, 100):
+                index = stage * 99 + chapter - 1
+                prerequisite = identifiers[(index + 1) % len(identifiers)]
+                rows.append(
+                    self.stage_row(
+                        stage,
+                        chapter,
+                        prerequisites=f"`{prerequisite}`",
+                        anchors="—",
+                    )
+                )
+            self.write_stage(stage, rows)
+        for stage in range(11, 21):
+            self.write_stage(stage)
+
+        first = self.outline("catalogs")
+        second = self.outline("catalogs")
+
+        self.assertEqual(first, second)
+        self.assert_has_rule(first, "OL007")
+        self.assertNotIn("RecursionError", "\n".join(first))
+        self.assertNotIn("Traceback", "\n".join(first))
+
+    def test_complete_missing_project_view_does_not_emit_ol011(self) -> None:
+        self.build_complete()
+        (self.root / "学习路线/06-贯穿项目演进线.md").unlink()
+
+        errors = self.outline("complete")
+
+        self.assertEqual(len(errors), 1, errors)
+        self.assert_has_rule(errors, "OL001")
+        self.assertFalse(any(" OL011 " in error for error in errors), errors)
+        self.assertNotIn("Traceback", "\n".join(errors))
+
+    def test_complete_malformed_project_view_does_not_emit_ol011(self) -> None:
+        self.build_complete()
+        self.write_text(
+            "学习路线/06-贯穿项目演进线.md",
+            "# 贯穿项目演进线\n\n"
+            + controlled_table(
+                ("错误项目列", "里程碑", "所需章节", "证据类型"),
+                [["项目 01", "`PRJ-01-M01`", "`09.01`", "验证记录"]],
+            ),
+        )
+
+        errors = self.outline("complete")
+
+        self.assertEqual(len(errors), 1, errors)
+        self.assert_has_rule(errors, "OL002")
+        self.assertFalse(any(" OL011 " in error for error in errors), errors)
+        self.assertNotIn("Traceback", "\n".join(errors))
+
+    def test_complete_invalid_project_view_milestone_does_not_emit_closure_ol011(
+        self,
+    ) -> None:
+        self.build_complete()
+        view_path = self.root / "学习路线/06-贯穿项目演进线.md"
+        view_text = view_path.read_text(encoding="utf-8")
+        view_path.write_text(
+            view_text.replace("`PRJ-01-M01`", "`PRJ-99-M01`", 1),
+            encoding="utf-8",
+        )
+
+        errors = self.outline("complete")
+
+        self.assertEqual(len(errors), 1, errors)
+        self.assert_has_rule(errors, "OL010")
+        self.assertFalse(any(" OL011 " in error for error in errors), errors)
+        self.assertNotIn("Traceback", "\n".join(errors))
+
     def test_complete_rejects_project_milestone_missing_from_evolution_view(
         self,
     ) -> None:

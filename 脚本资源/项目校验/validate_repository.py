@@ -134,6 +134,7 @@ OUTLINE_ANCHOR_RE = re.compile(
     r"`(?P<value>CP-(?:0\d|1\d|20)|LAB-L[1-4]|PRJ-0[1-5]-M\d{2})`"
 )
 OUTLINE_SEPARATOR_RE = re.compile(r":?-{3,}:?")
+HTML_BREAK_RE = re.compile(r"<br\b(?:\s+[^<>]*?)?\s*/?\s*>", re.IGNORECASE)
 
 WAVE_THREE_PLAIN_FILES = (
     "学习路线/README.md",
@@ -266,6 +267,7 @@ class _OutlineState:
     project_view_records: list[tuple[str, set[str], str, int]] = field(
         default_factory=list
     )
+    project_view_milestones_comparable: bool = False
 
 
 @dataclass(frozen=True)
@@ -300,6 +302,11 @@ def _parse_scalar(value: str) -> tuple[str, bool]:
     return value, True
 
 
+def _masked_code_line(line: str) -> str:
+    content = line.rstrip("\r\n")
+    return " " * len(content) + line[len(content) :]
+
+
 def _mask_fenced_code(text: str) -> str:
     lines = text.splitlines(keepends=True)
     active_char: str | None = None
@@ -311,16 +318,26 @@ def _mask_fenced_code(text: str) -> str:
         if active_char is None and match:
             fence = match.group("fence")
             active_char, active_length = fence[0], len(fence)
-            masked.append("\n" if line.endswith("\n") else "")
+            masked.append(_masked_code_line(line))
             continue
         if active_char is not None:
             closing = content.lstrip()
             if re.fullmatch(re.escape(active_char) + "{" + str(active_length) + ",}\\s*", closing):
                 active_char = None
                 active_length = 0
-            masked.append("\n" if line.endswith("\n") else "")
+            masked.append(_masked_code_line(line))
             continue
         masked.append(line)
+    return "".join(masked)
+
+
+def _mask_outline_code(text: str) -> str:
+    masked: list[str] = []
+    for line in _mask_fenced_code(text).splitlines(keepends=True):
+        if line.startswith(("    ", "\t")):
+            masked.append(_masked_code_line(line))
+        else:
+            masked.append(line)
     return "".join(masked)
 
 
@@ -875,7 +892,7 @@ def _load_controlled_table(
     text = _read_outline_file(root, relative, state, required=required)
     if text is None:
         return None
-    lines = text.splitlines()
+    lines = _mask_outline_code(text).splitlines()
     return _parse_controlled_table(
         lines, relative, expected_headers, state, required=required
     )
@@ -953,9 +970,9 @@ def _parse_stage_table(
                 f"预定文件与章节 ID {chapter_id} 不对齐",
             )
 
-        if not cells[2] or re.search(r"<br\s*/?>", cells[2], re.IGNORECASE):
+        if not cells[2] or HTML_BREAK_RE.search(cells[2]):
             _add_outline_error(state, table.path, row.line, "OL005", "标题必须为单行非空文本")
-        if not cells[3] or re.search(r"<br\s*/?>", cells[3], re.IGNORECASE):
+        if not cells[3] or HTML_BREAK_RE.search(cells[3]):
             _add_outline_error(
                 state, table.path, row.line, "OL005", "主要目标必须为单行非空文本"
             )
@@ -1018,7 +1035,7 @@ def _load_stage_catalog(
     text = _read_outline_file(root, relative, state, required=required)
     if text is None:
         return
-    lines = text.splitlines()
+    lines = _mask_outline_code(text).splitlines()
     headings = [index for index, line in enumerate(lines) if line == "## 章节清单"]
     table_like = any(
         (cells := _split_table_cells(line)) is not None
@@ -1060,27 +1077,45 @@ def _load_stage_catalog(
 
 def _catalog_cycles(graph: dict[str, tuple[str, ...]]) -> list[tuple[str, ...]]:
     colors: dict[str, int] = {}
-    stack: list[str] = []
+    path: list[str] = []
+    positions: dict[str, int] = {}
     cycles: set[tuple[str, ...]] = set()
-
-    def visit(chapter_id: str) -> None:
-        colors[chapter_id] = 1
-        stack.append(chapter_id)
-        for prerequisite in sorted(graph.get(chapter_id, ())):
-            if prerequisite not in graph:
-                continue
-            color = colors.get(prerequisite, 0)
-            if color == 0:
-                visit(prerequisite)
-            elif color == 1:
-                start = stack.index(prerequisite)
-                cycles.add(tuple(sorted(set(stack[start:]))))
-        stack.pop()
-        colors[chapter_id] = 2
+    adjacency = {
+        chapter_id: tuple(
+            prerequisite
+            for prerequisite in sorted(prerequisites)
+            if prerequisite in graph
+        )
+        for chapter_id, prerequisites in graph.items()
+    }
 
     for chapter_id in sorted(graph):
-        if colors.get(chapter_id, 0) == 0:
-            visit(chapter_id)
+        if colors.get(chapter_id, 0) != 0:
+            continue
+        colors[chapter_id] = 1
+        positions[chapter_id] = len(path)
+        path.append(chapter_id)
+        frames: list[tuple[str, int]] = [(chapter_id, 0)]
+        while frames:
+            current, next_index = frames[-1]
+            neighbors = adjacency[current]
+            if next_index >= len(neighbors):
+                frames.pop()
+                path.pop()
+                positions.pop(current)
+                colors[current] = 2
+                continue
+            prerequisite = neighbors[next_index]
+            frames[-1] = (current, next_index + 1)
+            color = colors.get(prerequisite, 0)
+            if color == 0:
+                colors[prerequisite] = 1
+                positions[prerequisite] = len(path)
+                path.append(prerequisite)
+                frames.append((prerequisite, 0))
+            elif color == 1:
+                start = positions[prerequisite]
+                cycles.add(tuple(sorted(path[start:])))
     return sorted(cycles)
 
 
@@ -1227,7 +1262,7 @@ def _parse_view_anchors(
 def _require_text(
     value: str, path: str, line: int, state: _OutlineState, field_name: str
 ) -> None:
-    if not value or re.search(r"<br\s*/?>", value, re.IGNORECASE):
+    if not value or HTML_BREAK_RE.search(value):
         _add_outline_error(
             state, path, line, "OL002", f"{field_name} 必须为单行非空文本"
         )
@@ -1483,8 +1518,9 @@ def _record_anchor_definition(
     state.anchor_definitions[anchor] = (path, line)
 
 
-def _validate_project_view(table: _ControlledTable, state: _OutlineState) -> None:
+def _validate_project_view(table: _ControlledTable, state: _OutlineState) -> bool:
     seen: set[str] = set()
+    milestones_comparable = True
     for row in table.rows:
         _require_text(row.cells[0], table.path, row.line, state, "项目")
         anchors = _parse_controlled_list(row.cells[1], OUTLINE_ANCHOR_RE)
@@ -1497,6 +1533,7 @@ def _validate_project_view(table: _ControlledTable, state: _OutlineState) -> Non
                 "项目演进视图的里程碑必须是单个 PRJ-NN-MCC",
             )
             milestone = None
+            milestones_comparable = False
         else:
             milestone = anchors[0]
             state.view_reference_count += 1
@@ -1516,6 +1553,7 @@ def _validate_project_view(table: _ControlledTable, state: _OutlineState) -> Non
             state.project_view_records.append(
                 (milestone, chapters, table.path, row.line)
             )
+    return milestones_comparable
 
 
 def _validate_checkpoint_table(
@@ -1688,18 +1726,19 @@ def _validate_anchor_and_project_closure(state: _OutlineState) -> None:
                     "OL011",
                     f"章节引用 {milestone}，但项目未列回章节 {chapter.chapter_id}",
                 )
-    view_milestones = {
-        milestone for milestone, _, _, _ in state.project_view_records
-    }
-    for milestone in sorted(state.project_mappings.keys() - view_milestones):
-        path, line = state.project_locations[milestone]
-        _add_outline_error(
-            state,
-            path,
-            line,
-            "OL011",
-            f"项目里程碑 {milestone} 未出现在贯穿项目视图",
-        )
+    if state.project_view_milestones_comparable:
+        view_milestones = {
+            milestone for milestone, _, _, _ in state.project_view_records
+        }
+        for milestone in sorted(state.project_mappings.keys() - view_milestones):
+            path, line = state.project_locations[milestone]
+            _add_outline_error(
+                state,
+                path,
+                line,
+                "OL011",
+                f"项目里程碑 {milestone} 未出现在贯穿项目视图",
+            )
     for milestone, chapters, path, line in state.project_view_records:
         mapping = state.project_mappings.get(milestone)
         if mapping is not None and chapters != mapping:
@@ -1739,7 +1778,9 @@ def _validate_complete(root: Path, state: _OutlineState) -> None:
         required=True,
     )
     if project_view is not None:
-        _validate_project_view(project_view, state)
+        state.project_view_milestones_comparable = _validate_project_view(
+            project_view, state
+        )
     checkpoint = _load_controlled_table(
         root, CHECKPOINT_PATH, CHECKPOINT_HEADERS, state, required=True
     )
