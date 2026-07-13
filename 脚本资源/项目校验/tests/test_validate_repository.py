@@ -55,6 +55,50 @@ last_updated: "{values["last_updated"]}"
 '''
 
 
+OUTLINE_STAGE_DIRECTORIES = (
+    "00-运维认知与学习准备",
+    "01-计算机与服务器基础",
+    "02-网络基础",
+    "03-实验环境",
+    "04-Linux基础",
+    "05-Linux系统管理",
+    "06-Linux日志体系",
+    "07-性能与安全",
+    "08-Shell与Python",
+    "09-企业基础服务",
+    "10-数据服务",
+    "11-自动化与协作",
+    "12-虚拟化与阿里云",
+    "13-Docker容器",
+    "14-Kubernetes",
+    "15-DevOps与CI-CD",
+    "16-企业日志平台",
+    "17-监控与可观测性",
+    "18-AI-Infra",
+    "19-AIOps与MLOps",
+    "20-SRE与架构能力",
+)
+
+STAGE_HEADERS = (
+    "章节 ID",
+    "预定文件",
+    "标题",
+    "主要目标",
+    "type",
+    "直接前置",
+    "建议投入",
+    "就业标签",
+    "实践锚点",
+)
+
+
+def controlled_table(headers: tuple[str, ...], rows: list[list[str]]) -> str:
+    header = "| " + " | ".join(headers) + " |"
+    separator = "|" + "|".join("---" for _ in headers) + "|"
+    body = "\n".join("| " + " | ".join(row) + " |" for row in rows)
+    return f"{header}\n{separator}\n{body}\n"
+
+
 class RepositoryFixture(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -438,6 +482,549 @@ class RepositoryAndCliTests(RepositoryFixture):
         repository_root = Path(__file__).resolve().parents[3]
         errors = validator.validate_repository(repository_root)
         self.assertEqual(errors, [], "真实仓库诊断：\n" + "\n".join(errors))
+
+
+class OutlineGateTests(RepositoryFixture):
+    project_names = {
+        1: "01-若依传统部署",
+        2: "02-Docker容器化改造",
+        3: "03-Kubernetes云原生部署",
+        4: "04-可观测性建设",
+        5: "05-AI推理服务部署",
+    }
+    project_stages = {1: 9, 2: 13, 3: 14, 4: 17, 5: 18}
+
+    def outline(self, gate: str, root: Path | None = None) -> list[str]:
+        function = getattr(validator, "validate_outline", None)
+        self.assertTrue(callable(function), "缺少 validate_outline 公开入口")
+        return function(root or self.root, gate)
+
+    def assert_outline_rule(self, gate: str, rule: str) -> list[str]:
+        errors = self.outline(gate)
+        self.assert_has_rule(errors, rule)
+        return errors
+
+    def chapter_list(self, chapters: list[str]) -> str:
+        return ", ".join(f"`{chapter}`" for chapter in chapters) if chapters else "—"
+
+    def stage_row(
+        self,
+        stage: int,
+        chapter: int = 1,
+        *,
+        chapter_id: str | None = None,
+        filename: str | None = None,
+        title: str = "测试章节",
+        objective: str = "解释一个可检查的目标",
+        kind: str = "`concept`",
+        prerequisites: str | None = None,
+        study_time: str = "30–60 分钟",
+        employment: str = "必须学",
+        anchors: str | None = None,
+    ) -> list[str]:
+        actual_id = chapter_id or f"{stage:02d}.{chapter:02d}"
+        if prerequisites is None:
+            prerequisites = "—" if stage == 0 else f"`{stage - 1:02d}.01`"
+        if anchors is None:
+            project = next(
+                (
+                    project
+                    for project, project_stage in self.project_stages.items()
+                    if project_stage == stage
+                ),
+                None,
+            )
+            anchors = f"`PRJ-{project:02d}-M01`" if project is not None else "—"
+        return [
+            f"`{actual_id}`",
+            filename or f"`{actual_id}-测试章节.md`",
+            title,
+            objective,
+            kind,
+            prerequisites,
+            study_time,
+            employment,
+            anchors,
+        ]
+
+    def write_stage(
+        self,
+        stage: int,
+        rows: list[list[str]] | None = None,
+        *,
+        headers: tuple[str, ...] = STAGE_HEADERS,
+        heading: bool = True,
+        duplicate_heading: bool = False,
+        separator_override: str | None = None,
+    ) -> Path:
+        rows = rows if rows is not None else [self.stage_row(stage)]
+        table = controlled_table(headers, rows)
+        if separator_override is not None:
+            table_lines = table.splitlines()
+            table_lines[1] = separator_override
+            table = "\n".join(table_lines) + "\n"
+        content = "# 阶段\n\n"
+        if heading:
+            content += "## 章节清单\n\n"
+        content += table
+        if duplicate_heading:
+            content += "\n## 章节清单\n"
+        return self.write_text(
+            f"知识库/{OUTLINE_STAGE_DIRECTORIES[stage]}/README.md", content
+        )
+
+    def build_catalogs(self) -> None:
+        for stage in range(21):
+            self.write_stage(stage)
+
+    def route_rows(self) -> list[list[str]]:
+        chapters = [f"{stage:02d}.01" for stage in range(21)]
+        sizes = [2] * 9 + [1] * 3
+        rows: list[list[str]] = []
+        offset = 0
+        for week, size in enumerate(sizes, start=1):
+            current = chapters[offset : offset + size]
+            offset += size
+            rows.append(
+                [f"第 {week} 周", self.chapter_list(current), "—", f"完成第 {week} 周", "—"]
+            )
+        return rows
+
+    def write_route(self, rows: list[list[str]] | None = None) -> None:
+        self.write_text(
+            "学习路线/02-三个月就业路线.md",
+            "# 三个月就业路线\n\n"
+            + controlled_table(
+                ("周次", "主线章节", "弹性章节", "阶段成果", "实践锚点"),
+                rows or self.route_rows(),
+            ),
+        )
+
+    def build_views(self) -> None:
+        self.build_catalogs()
+        for path in (
+            "学习路线/README.md",
+            "学习路线/00-学习路线导航.md",
+            "学习路线/01-完整成长路线.md",
+            "学习路线/04-每日每周学习模板.md",
+            "技术索引/README.md",
+        ):
+            self.write_text(path, "# 导航入口\n")
+        self.write_route()
+        self.write_text(
+            "学习路线/03-职业发展路线.md",
+            "# 职业发展路线\n\n"
+            + controlled_table(
+                ("能力层级", "岗位方向", "章节 ID", "阶段成果", "项目锚点"),
+                [["入门", "Linux 运维", "`00.01`, `01.01`", "理解基础", "—"]],
+            ),
+        )
+        self.write_text(
+            "学习路线/05-知识前置依赖.md",
+            "# 知识前置依赖\n\n"
+            + controlled_table(
+                ("后学章节", "直接前置", "关系说明"),
+                [["`01.01`", "`00.01`", "先建立运维认知"]],
+            ),
+        )
+        self.write_text(
+            "技术索引/按技术名称.md",
+            "# 按技术名称\n\n"
+            + controlled_table(
+                ("技术主词", "别名", "章节 ID"),
+                [["Linux", "GNU/Linux", "`00.01`, `01.01`"]],
+            ),
+        )
+        self.write_text(
+            "技术索引/按故障现象.md",
+            "# 按故障现象\n\n"
+            + controlled_table(
+                ("故障现象", "机制章节", "排查方法章节", "未来案例入口"),
+                [["无法连接", "`00.01`", "`01.01`", "—"]],
+            ),
+        )
+        self.write_text(
+            "技术索引/按岗位能力.md",
+            "# 按岗位能力\n\n"
+            + controlled_table(
+                ("岗位能力", "章节 ID", "阶段成果", "项目锚点"),
+                [["主机管理", "`00.01`, `01.01`", "能解释基础", "—"]],
+            ),
+        )
+
+    def write_project(
+        self,
+        project: int,
+        chapters: list[str] | None = None,
+        *,
+        milestone: str | None = None,
+    ) -> None:
+        stage = self.project_stages[project]
+        chapters = chapters if chapters is not None else [f"{stage:02d}.01"]
+        milestone = milestone or f"PRJ-{project:02d}-M01"
+        self.write_text(
+            f"项目实战/{self.project_names[project]}/README.md",
+            f"# 项目 {project:02d}\n\n"
+            + controlled_table(
+                ("里程碑", "能力结果", "所需章节", "证据类型", "未来内容归属"),
+                [[f"`{milestone}`", "完成能力结果", self.chapter_list(chapters), "验证记录", "后续项目任务"]],
+            ),
+        )
+
+    def build_complete(self) -> None:
+        self.build_views()
+        project_rows = [
+            [
+                f"项目 {project:02d}",
+                f"`PRJ-{project:02d}-M01`",
+                f"`{stage:02d}.01`",
+                "验证记录",
+            ]
+            for project, stage in self.project_stages.items()
+        ]
+        self.write_text(
+            "学习路线/06-贯穿项目演进线.md",
+            "# 贯穿项目演进线\n\n"
+            + controlled_table(
+                ("项目", "里程碑", "所需章节", "证据类型"), project_rows
+            ),
+        )
+        checkpoint_rows = [
+            [
+                f"`CP-{stage:02d}`",
+                f"`{stage:02d}`",
+                f"`{stage:02d}.01`",
+                "—",
+                "完成阶段能力",
+            ]
+            for stage in range(21)
+        ]
+        self.write_text(
+            "学习路线/阶段检查点/README.md",
+            "# 阶段检查点\n\n"
+            + controlled_table(
+                ("检查点", "阶段", "所需章节", "实践锚点", "能力结果"),
+                checkpoint_rows,
+            ),
+        )
+        self.write_text("实验手册/README.md", "# 实验手册\n")
+        level_names = {
+            1: "Level-1-基础实验",
+            2: "Level-2-综合实验",
+            3: "Level-3-企业实验",
+            4: "Level-4-架构实验",
+        }
+        for level, name in level_names.items():
+            self.write_text(
+                f"实验手册/{name}/README.md",
+                f"# Level {level}\n\n## 实践锚点\n\n`LAB-L{level}`\n",
+            )
+        self.write_text("项目实战/README.md", "# 项目实战\n")
+        for project in range(1, 6):
+            self.write_project(project)
+
+    def test_outline_api_is_available(self) -> None:
+        self.assertTrue(callable(getattr(validator, "validate_outline", None)))
+
+    def test_partial_accepts_current_repository_skeleton(self) -> None:
+        repository_root = Path(__file__).resolve().parents[3]
+        self.assertEqual(self.outline("partial", repository_root), [])
+
+    def test_partial_accepts_valid_existing_catalog(self) -> None:
+        self.write_stage(0)
+        self.assertEqual(self.outline("partial"), [])
+
+    def test_partial_accepts_multiple_values_and_empty_sets(self) -> None:
+        rows = [
+            self.stage_row(0),
+            self.stage_row(
+                0,
+                2,
+                prerequisites="`00.01`",
+                anchors="`CP-00`, `LAB-L1`, `PRJ-01-M01`",
+            ),
+        ]
+        self.write_stage(0, rows)
+        self.assertEqual(self.outline("partial"), [])
+
+    def test_partial_requires_heading_when_controlled_table_exists(self) -> None:
+        self.write_stage(0, heading=False)
+        self.assert_outline_rule("partial", "OL001")
+
+    def test_partial_rejects_duplicate_catalog_heading(self) -> None:
+        self.write_stage(0, duplicate_heading=True)
+        self.assert_outline_rule("partial", "OL001")
+
+    def test_partial_rejects_wrong_header(self) -> None:
+        headers = STAGE_HEADERS[:-1] + ("锚点",)
+        self.write_stage(0, headers=headers)
+        self.assert_outline_rule("partial", "OL002")
+
+    def test_partial_rejects_invalid_separator(self) -> None:
+        self.write_stage(0, separator_override="|---|---|")
+        self.assert_outline_rule("partial", "OL002")
+
+    def test_ol003_rejects_invalid_chapter_id(self) -> None:
+        self.write_stage(0, [self.stage_row(0, chapter_id="0.1")])
+        self.assert_outline_rule("partial", "OL003")
+
+    def test_ol003_rejects_stage_mismatch(self) -> None:
+        self.write_stage(0, [self.stage_row(0, chapter_id="01.01")])
+        self.assert_outline_rule("partial", "OL003")
+
+    def test_ol003_rejects_non_contiguous_ids(self) -> None:
+        self.write_stage(0, [self.stage_row(0, 2)])
+        self.assert_outline_rule("partial", "OL003")
+
+    def test_ol003_rejects_duplicate_ids(self) -> None:
+        self.write_stage(0)
+        self.write_stage(1, [self.stage_row(1, chapter_id="00.01")])
+        self.assert_outline_rule("partial", "OL003")
+
+    def test_ol004_rejects_invalid_filename(self) -> None:
+        self.write_stage(0, [self.stage_row(0, filename="`00.01 bad.md`")])
+        self.assert_outline_rule("partial", "OL004")
+
+    def test_ol004_rejects_filename_id_mismatch(self) -> None:
+        self.write_stage(0, [self.stage_row(0, filename="`00.02-测试.md`")])
+        self.assert_outline_rule("partial", "OL004")
+
+    def test_ol004_rejects_duplicate_filenames(self) -> None:
+        self.write_stage(0)
+        self.write_stage(1, [self.stage_row(1, filename="`00.01-测试章节.md`")])
+        self.assert_outline_rule("partial", "OL004")
+
+    def test_ol005_rejects_invalid_controlled_fields(self) -> None:
+        self.write_stage(
+            0,
+            [
+                self.stage_row(
+                    0,
+                    title="",
+                    objective="<br>",
+                    kind="`tutorial`",
+                    study_time="45 分钟",
+                    employment="核心",
+                )
+            ],
+        )
+        errors = self.assert_outline_rule("partial", "OL005")
+        self.assertGreaterEqual(sum(" OL005 " in error for error in errors), 4)
+
+    def test_ol006_rejects_missing_prerequisite(self) -> None:
+        self.write_stage(0, [self.stage_row(0, prerequisites="`99.01`")])
+        self.assert_outline_rule("partial", "OL006")
+
+    def test_ol006_rejects_self_reference(self) -> None:
+        self.write_stage(0, [self.stage_row(0, prerequisites="`00.01`")])
+        self.assert_outline_rule("partial", "OL006")
+
+    def test_ol006_rejects_forward_reference(self) -> None:
+        self.write_stage(
+            0,
+            [
+                self.stage_row(0, 1, prerequisites="`00.02`"),
+                self.stage_row(0, 2, prerequisites="—"),
+            ],
+        )
+        self.assert_outline_rule("partial", "OL006")
+
+    def test_ol007_rejects_multi_node_cycle(self) -> None:
+        self.write_stage(
+            0,
+            [
+                self.stage_row(0, 1, prerequisites="`00.02`"),
+                self.stage_row(0, 2, prerequisites="`00.01`"),
+            ],
+        )
+        self.assert_outline_rule("partial", "OL007")
+
+    def test_catalogs_accepts_all_twenty_one_catalogs(self) -> None:
+        self.build_catalogs()
+        self.assertEqual(self.outline("catalogs"), [])
+
+    def test_catalogs_requires_all_twenty_one_catalogs(self) -> None:
+        self.build_catalogs()
+        (self.root / f"知识库/{OUTLINE_STAGE_DIRECTORIES[20]}/README.md").unlink()
+        self.assert_outline_rule("catalogs", "OL001")
+
+    def test_ol009_rejects_required_dependency_on_post_study(self) -> None:
+        self.build_catalogs()
+        self.write_stage(0, [self.stage_row(0, employment="就业后补学")])
+        self.assert_outline_rule("catalogs", "OL009")
+
+    def test_views_accepts_catalogs_routes_and_indexes(self) -> None:
+        self.build_views()
+        self.assertEqual(self.outline("views"), [])
+
+    def test_views_requires_wave_three_route_file(self) -> None:
+        self.build_views()
+        (self.root / "技术索引/按岗位能力.md").unlink()
+        self.assert_outline_rule("views", "OL001")
+
+    def test_ol008_rejects_unknown_view_chapter(self) -> None:
+        self.build_views()
+        self.write_text(
+            "技术索引/按技术名称.md",
+            controlled_table(
+                ("技术主词", "别名", "章节 ID"),
+                [["Linux", "GNU/Linux", "`99.01`"]],
+            ),
+        )
+        self.assert_outline_rule("views", "OL008")
+
+    def test_ol008_rejects_route_prerequisite_order(self) -> None:
+        self.build_views()
+        rows = self.route_rows()
+        rows[0][1] = "`01.01`, `00.01`"
+        self.write_route(rows)
+        self.assert_outline_rule("views", "OL008")
+
+    def test_ol009_rejects_incomplete_twelve_week_closure(self) -> None:
+        self.build_views()
+        rows = self.route_rows()
+        rows[-1][1] = "—"
+        self.write_route(rows)
+        self.assert_outline_rule("views", "OL009")
+
+    def test_ol009_rejects_extra_mainline_chapter(self) -> None:
+        self.build_views()
+        self.write_stage(20, [self.stage_row(20, employment="建议学")])
+        self.assert_outline_rule("views", "OL009")
+
+    def test_ol009_rejects_out_of_order_week_rows(self) -> None:
+        self.build_views()
+        rows = self.route_rows()
+        rows[0][0], rows[1][0] = rows[1][0], rows[0][0]
+        self.write_route(rows)
+        self.assert_outline_rule("views", "OL009")
+
+    def test_ol012_rejects_duplicate_mainline_id(self) -> None:
+        self.build_views()
+        rows = self.route_rows()
+        rows[-1][1] += ", `00.01`"
+        self.write_route(rows)
+        self.assert_outline_rule("views", "OL012")
+
+    def test_ol012_rejects_non_suggested_flexible_chapter(self) -> None:
+        self.build_views()
+        rows = self.route_rows()
+        rows[0][2] = "`00.01`"
+        self.write_route(rows)
+        self.assert_outline_rule("views", "OL012")
+
+    def test_complete_accepts_closed_anchors_and_projects(self) -> None:
+        self.build_complete()
+        self.assertEqual(self.outline("complete"), [])
+
+    def test_complete_requires_level_anchor_file(self) -> None:
+        self.build_complete()
+        (self.root / "实验手册/Level-4-架构实验/README.md").unlink()
+        self.assert_outline_rule("complete", "OL001")
+
+    def test_ol010_rejects_invalid_anchor_syntax(self) -> None:
+        self.write_stage(0, [self.stage_row(0, anchors="`LAB-L5`")])
+        self.assert_outline_rule("partial", "OL010")
+
+    def test_ol010_rejects_undefined_anchor(self) -> None:
+        self.build_complete()
+        self.write_stage(0, [self.stage_row(0, anchors="`PRJ-01-M02`")])
+        self.assert_outline_rule("complete", "OL010")
+
+    def test_ol010_rejects_non_contiguous_project_milestones(self) -> None:
+        self.build_complete()
+        self.write_project(1, milestone="PRJ-01-M02")
+        self.assert_outline_rule("complete", "OL010")
+
+    def test_ol010_rejects_missing_checkpoint_definition(self) -> None:
+        self.build_complete()
+        rows = [
+            [f"`CP-{stage:02d}`", f"`{stage:02d}`", f"`{stage:02d}.01`", "—", "完成阶段能力"]
+            for stage in range(20)
+        ]
+        self.write_text(
+            "学习路线/阶段检查点/README.md",
+            controlled_table(
+                ("检查点", "阶段", "所需章节", "实践锚点", "能力结果"), rows
+            ),
+        )
+        self.assert_outline_rule("complete", "OL010")
+
+    def test_ol010_rejects_out_of_order_checkpoint_definitions(self) -> None:
+        self.build_complete()
+        rows = [
+            [f"`CP-{stage:02d}`", f"`{stage:02d}`", f"`{stage:02d}.01`", "—", "完成阶段能力"]
+            for stage in range(21)
+        ]
+        rows[0], rows[1] = rows[1], rows[0]
+        self.write_text(
+            "学习路线/阶段检查点/README.md",
+            controlled_table(
+                ("检查点", "阶段", "所需章节", "实践锚点", "能力结果"), rows
+            ),
+        )
+        self.assert_outline_rule("complete", "OL010")
+
+    def test_ol010_rejects_lab_definition_in_wrong_level(self) -> None:
+        self.build_complete()
+        self.write_text(
+            "实验手册/Level-2-综合实验/README.md", "# Level 2\n\n`LAB-L3`\n"
+        )
+        self.assert_outline_rule("complete", "OL010")
+
+    def test_ol011_rejects_project_to_chapter_mapping_gap(self) -> None:
+        self.build_complete()
+        self.write_stage(9, [self.stage_row(9, anchors="—")])
+        self.assert_outline_rule("complete", "OL011")
+
+    def test_ol011_rejects_chapter_to_project_mapping_gap(self) -> None:
+        self.build_complete()
+        self.write_project(1, chapters=["08.01"])
+        self.assert_outline_rule("complete", "OL011")
+
+    def test_outline_diagnostics_are_deterministic(self) -> None:
+        self.write_stage(0, [self.stage_row(0, prerequisites="`99.01`")])
+        first = self.outline("partial")
+        second = self.outline("partial")
+        self.assertEqual(first, second)
+        self.assertEqual(first, sorted(first, key=validator._error_sort_key))
+
+    def test_cli_help_lists_four_outline_gates(self) -> None:
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout), self.assertRaises(SystemExit) as caught:
+            validator.main(["--help"])
+        self.assertEqual(caught.exception.code, 0)
+        for gate in ("partial", "catalogs", "views", "complete"):
+            self.assertIn(gate, stdout.getvalue())
+
+    def test_cli_partial_returns_zero_and_reports_outline_counts(self) -> None:
+        stdout, stderr = io.StringIO(), io.StringIO()
+        try:
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                code = validator.main([str(self.root), "--outline-gate", "partial"])
+        except SystemExit as error:
+            self.fail(f"partial CLI 不应由 argparse 提前退出：{error}")
+        self.assertEqual(code, 0)
+        self.assertIn("大纲门禁通过", stdout.getvalue())
+        self.assertEqual(stderr.getvalue(), "")
+
+    def test_cli_catalogs_returns_one_with_ol001_without_traceback(self) -> None:
+        stdout, stderr = io.StringIO(), io.StringIO()
+        try:
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                code = validator.main([str(self.root), "--outline-gate", "catalogs"])
+        except SystemExit as error:
+            self.fail(f"catalogs CLI 不应由 argparse 提前退出：{error}")
+        self.assertEqual(code, 1)
+        self.assertIn("OL001", stderr.getvalue())
+        self.assertNotIn("Traceback", stdout.getvalue() + stderr.getvalue())
+
+    def test_cli_rejects_unknown_outline_gate(self) -> None:
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr), self.assertRaises(SystemExit) as caught:
+            validator.main([str(self.root), "--outline-gate", "unknown"])
+        self.assertEqual(caught.exception.code, 2)
+        self.assertIn("invalid choice", stderr.getvalue())
 
 
 if __name__ == "__main__":
