@@ -1688,6 +1688,18 @@ def _validate_anchor_and_project_closure(state: _OutlineState) -> None:
                     "OL011",
                     f"章节引用 {milestone}，但项目未列回章节 {chapter.chapter_id}",
                 )
+    view_milestones = {
+        milestone for milestone, _, _, _ in state.project_view_records
+    }
+    for milestone in sorted(state.project_mappings.keys() - view_milestones):
+        path, line = state.project_locations[milestone]
+        _add_outline_error(
+            state,
+            path,
+            line,
+            "OL011",
+            f"项目里程碑 {milestone} 未出现在贯穿项目视图",
+        )
     for milestone, chapters, path, line in state.project_view_records:
         mapping = state.project_mappings.get(milestone)
         if mapping is not None and chapters != mapping:

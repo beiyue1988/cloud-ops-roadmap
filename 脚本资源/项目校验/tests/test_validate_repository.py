@@ -917,6 +917,25 @@ class OutlineGateTests(RepositoryFixture):
         self.build_complete()
         self.assertEqual(self.outline("complete"), [])
 
+    def test_complete_rejects_project_milestone_missing_from_evolution_view(
+        self,
+    ) -> None:
+        self.build_complete()
+        missing_milestone = "PRJ-05-M01"
+        view_path = self.root / "学习路线/06-贯穿项目演进线.md"
+        view_text = view_path.read_text(encoding="utf-8")
+        missing_row = (
+            f"| 项目 05 | `{missing_milestone}` | `18.01` | 验证记录 |\n"
+        )
+        self.assertIn(missing_row, view_text)
+        view_path.write_text(view_text.replace(missing_row, ""), encoding="utf-8")
+
+        errors = self.outline("complete")
+
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn(" OL011 ", errors[0])
+        self.assertIn(missing_milestone, errors[0])
+
     def test_complete_requires_level_anchor_file(self) -> None:
         self.build_complete()
         (self.root / "实验手册/Level-4-架构实验/README.md").unlink()
