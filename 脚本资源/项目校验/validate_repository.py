@@ -134,7 +134,7 @@ OUTLINE_ANCHOR_RE = re.compile(
     r"`(?P<value>CP-(?:0\d|1\d|20)|LAB-L[1-4]|PRJ-0[1-5]-M\d{2})`"
 )
 OUTLINE_SEPARATOR_RE = re.compile(r":?-{3,}:?")
-HTML_BREAK_RE = re.compile(r"<br\b(?:\s+[^<>]*?)?\s*/?\s*>", re.IGNORECASE)
+HTML_BREAK_RE = re.compile(r"<br(?=[\s/>])", re.IGNORECASE)
 
 WAVE_THREE_PLAIN_FILES = (
     "学习路线/README.md",

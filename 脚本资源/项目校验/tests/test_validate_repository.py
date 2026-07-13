@@ -1011,6 +1011,93 @@ class OutlineGateTests(RepositoryFixture):
         )
         self.assertEqual(self.outline("complete"), [])
 
+    def test_complete_rejects_html_break_with_angle_brackets_in_attributes(
+        self,
+    ) -> None:
+        self.build_complete()
+
+        def write_stage_result(value: str) -> None:
+            self.write_text(
+                "学习路线/03-职业发展路线.md",
+                "# 职业发展路线\n\n"
+                + controlled_table(
+                    ("能力层级", "岗位方向", "章节 ID", "阶段成果", "项目锚点"),
+                    [
+                        [
+                            "入门",
+                            "Linux 运维",
+                            "`00.01`, `01.01`",
+                            value,
+                            "—",
+                        ]
+                    ],
+                ),
+            )
+
+        variants = (
+            '<br title="<x>">',
+            '<BR title="<x>" />',
+            '<br data-note="a > b < c">',
+            "<br title='<x>'>",
+        )
+        for variant in variants:
+            write_stage_result("完成阶段成果")
+            with self.subTest(field="title", variant=variant):
+                self.write_stage(
+                    0,
+                    [self.stage_row(0, title=f"测试{variant}章节")],
+                )
+
+                errors = self.outline("complete")
+
+                self.assert_has_rule(errors, "OL005")
+                self.assertTrue(any("标题" in error for error in errors), errors)
+                self.assertNotIn("Traceback", "\n".join(errors))
+
+            self.write_stage(0)
+            with self.subTest(field="stage_result", variant=variant):
+                write_stage_result(f"完成{variant}结果")
+
+                errors = self.outline("complete")
+
+                self.assert_has_rule(errors, "OL002")
+                self.assertTrue(any("阶段成果" in error for error in errors), errors)
+                self.assertNotIn("Traceback", "\n".join(errors))
+
+    def test_complete_allows_plain_br_and_non_break_tag_names(self) -> None:
+        self.build_complete()
+        controls = (
+            "普通 br 文本",
+            "<bracket>",
+            "<br-description>",
+            "<br:custom>",
+            "<brx>",
+        )
+        for control in controls:
+            with self.subTest(control=control):
+                self.write_stage(
+                    0,
+                    [self.stage_row(0, title=f"测试{control}章节")],
+                )
+                self.write_text(
+                    "学习路线/03-职业发展路线.md",
+                    "# 职业发展路线\n\n"
+                    + controlled_table(
+                        ("能力层级", "岗位方向", "章节 ID", "阶段成果", "项目锚点"),
+                        [
+                            [
+                                "入门",
+                                "Linux 运维",
+                                "`00.01`, `01.01`",
+                                f"完成{control}结果",
+                                "—",
+                            ]
+                        ],
+                    ),
+                )
+
+                self.assertEqual(self.outline("complete"), [])
+
     def test_catalogs_handles_graph_deeper_than_recursion_limit(self) -> None:
         identifiers = [
             f"{stage:02d}.{chapter:02d}"
