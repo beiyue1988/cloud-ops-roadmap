@@ -255,14 +255,26 @@ class _Chapter:
 
 
 @dataclass(frozen=True)
-class _ProjectRecordExclusion:
+class _ProjectRecordCandidate:
     side: str
     owner: int | None
     raw_key: str | None
     expected_key: str | None
+    chapters: frozenset[str] | None
+    path: str
+    line: int
+    closure_fields_valid: bool
+    identity_stable: bool
 
-    def matches(self, key: str) -> bool:
-        return key in {self.raw_key, self.expected_key}
+
+@dataclass(frozen=True)
+class _AnchorReference:
+    anchor: str
+    path: str
+    line: int
+    source: str
+    owner: int | None
+    related_chapters: frozenset[str] | None
 
 
 @dataclass
@@ -274,14 +286,14 @@ class _OutlineState:
     dependency_count: int = 0
     view_reference_count: int = 0
     anchor_definitions: dict[str, tuple[str, int]] = field(default_factory=dict)
-    anchor_references: list[tuple[str, str, int]] = field(default_factory=list)
+    anchor_references: list[_AnchorReference] = field(default_factory=list)
     project_mappings: dict[str, set[str]] = field(default_factory=dict)
     project_locations: dict[str, tuple[str, int]] = field(default_factory=dict)
     project_view_records: list[tuple[str, set[str], str, int]] = field(
         default_factory=list
     )
     project_view_milestones_comparable: bool = False
-    project_record_exclusions: list[_ProjectRecordExclusion] = field(
+    project_record_candidates: list[_ProjectRecordCandidate] = field(
         default_factory=list
     )
     invalid_project_tables: set[int] = field(default_factory=set)
@@ -876,6 +888,12 @@ def _split_table_cells(line: str) -> tuple[str, ...] | None:
     return tuple(cell.strip() for cell in stripped[1:-1].split("|"))
 
 
+def _looks_like_separator_row(cells: tuple[str, ...]) -> bool:
+    return bool(cells) and all(
+        re.fullmatch(r":?-+:?", cell) is not None for cell in cells
+    )
+
+
 def _parse_controlled_table(
     lines: list[str],
     relative: str,
@@ -925,9 +943,17 @@ def _parse_controlled_table(
         )
         structure_valid = False
 
+    separator_is_data = (
+        separator is not None
+        and len(separator) == len(expected_headers)
+        and not _looks_like_separator_row(separator)
+    )
     rows: list[_TableRow] = []
-    index = separator_index + 1
     position = 1
+    if separator_is_data:
+        rows.append(_TableRow(separator, separator_index + 1, position))
+        position += 1
+    index = separator_index + 1
     while index < stop and lines[index].strip():
         cells = _split_table_cells(lines[index])
         if cells is None or len(cells) != len(expected_headers):
@@ -1101,9 +1127,16 @@ def _parse_stage_table(
             )
             state.chapter_entries.append(chapter)
             state.dependency_count += len(prerequisites)
-            state.anchor_references.extend(
-                (anchor, table.path, row.line) for anchor in anchors
-            )
+            for anchor in anchors:
+                _record_anchor_reference(
+                    state,
+                    anchor,
+                    table.path,
+                    row.line,
+                    source="chapter",
+                    owner=_project_key_owner(anchor),
+                    related_chapters=frozenset({chapter_id}),
+                )
 
 
 def _load_stage_catalog(
@@ -1370,6 +1403,7 @@ def _parse_view_anchors(
     line: int,
     state: _OutlineState,
     *,
+    source: str,
     register: bool = True,
 ) -> tuple[str, ...]:
     anchors = _parse_controlled_list(value, OUTLINE_ANCHOR_RE)
@@ -1383,7 +1417,15 @@ def _parse_view_anchors(
     if len(set(anchors)) != len(anchors):
         _add_outline_error(state, path, line, "OL012", "同一单元格包含重复锚点")
     if register:
-        state.anchor_references.extend((anchor, path, line) for anchor in anchors)
+        for anchor in anchors:
+            _record_anchor_reference(
+                state,
+                anchor,
+                path,
+                line,
+                source=source,
+                owner=_project_key_owner(anchor),
+            )
     return anchors
 
 
@@ -1464,6 +1506,7 @@ def _validate_route_table(
             table.path,
             row.line,
             state,
+            source="other",
             register=table.structure_valid,
         )
 
@@ -1574,6 +1617,7 @@ def _validate_career_table(table: _ControlledTable, state: _OutlineState) -> Non
             table.path,
             row.line,
             state,
+            source="other",
             register=table.structure_valid,
         )
 
@@ -1674,7 +1718,7 @@ def _validate_role_table(table: _ControlledTable, state: _OutlineState) -> None:
         )
         _require_text(row.cells[2], table.path, row.line, state, "阶段成果")
         _parse_view_anchors(
-            row.cells[3], table.path, row.line, state,
+            row.cells[3], table.path, row.line, state, source="other",
             register=table.structure_valid,
         )
 
@@ -1713,6 +1757,23 @@ def _record_anchor_definition(
     state.anchor_definitions[anchor] = (path, line)
 
 
+def _record_anchor_reference(
+    state: _OutlineState,
+    anchor: str,
+    path: str,
+    line: int,
+    *,
+    source: str,
+    owner: int | None = None,
+    related_chapters: frozenset[str] | None = None,
+) -> None:
+    state.anchor_references.append(
+        _AnchorReference(
+            anchor, path, line, source, owner, related_chapters
+        )
+    )
+
+
 def _project_owner_from_label(value: str) -> int | None:
     match = re.fullmatch(r"项目 (0[1-5])", value)
     return int(match.group(1)) if match is not None else None
@@ -1731,25 +1792,13 @@ def _project_key_owner(value: str | None) -> int | None:
 def _expected_view_project_key(owner: int | None, raw_key: str | None) -> str | None:
     suffix = re.search(r"(M\d{2})$", raw_key or "")
     if owner is None or suffix is None:
-        return raw_key
+        return None
     return f"PRJ-{owner:02d}-{suffix.group(1)}"
-
-
-def _exclude_project_record(
-    state: _OutlineState,
-    *,
-    side: str,
-    owner: int | None,
-    raw_key: str | None,
-    expected_key: str | None,
-) -> None:
-    exclusion = _ProjectRecordExclusion(side, owner, raw_key, expected_key)
-    if exclusion not in state.project_record_exclusions:
-        state.project_record_exclusions.append(exclusion)
 
 
 def _validate_project_view(table: _ControlledTable, state: _OutlineState) -> bool:
     seen: set[str] = set()
+    milestones_comparable = table.structure_valid
     for row in table.rows:
         project_text_valid = _require_text(
             row.cells[0], table.path, row.line, state, "项目"
@@ -1800,27 +1849,44 @@ def _validate_project_view(table: _ControlledTable, state: _OutlineState) -> boo
         )
         chapters = set(parsed_chapters)
         _require_text(row.cells[3], table.path, row.line, state, "证据类型")
-        record_valid = (
+        closure_fields_valid = (
             table.structure_valid
             and project_text_valid
             and milestone is not None
             and chapters_valid
         )
-        if record_valid:
+        identity_stable = owner is not None and expected_key is not None
+        if table.structure_valid:
+            state.project_record_candidates.append(
+                _ProjectRecordCandidate(
+                    "view",
+                    owner,
+                    raw_key,
+                    expected_key,
+                    frozenset(chapters) if chapters_valid else None,
+                    table.path,
+                    row.line,
+                    closure_fields_valid,
+                    identity_stable,
+                )
+            )
+            if not identity_stable:
+                milestones_comparable = False
+        if closure_fields_valid:
             state.view_reference_count += 1
-            state.anchor_references.append((milestone, table.path, row.line))
+            _record_anchor_reference(
+                state,
+                milestone,
+                table.path,
+                row.line,
+                source="view",
+                owner=owner,
+                related_chapters=frozenset(chapters),
+            )
             state.project_view_records.append(
                 (milestone, chapters, table.path, row.line)
             )
-        elif table.structure_valid:
-            _exclude_project_record(
-                state,
-                side="view",
-                owner=owner,
-                raw_key=raw_key,
-                expected_key=expected_key,
-            )
-    return table.structure_valid
+    return milestones_comparable
 
 
 def _validate_checkpoint_table(
@@ -1874,6 +1940,7 @@ def _validate_checkpoint_table(
             table.path,
             row.line,
             state,
+            source="other",
             register=table.structure_valid,
         )
         _require_text(row.cells[4], table.path, row.line, state, "能力结果")
@@ -1967,25 +2034,31 @@ def _validate_project_table(
         chapters = set(parsed_chapters)
         _require_text(row.cells[3], table.path, row.line, state, "证据类型")
         _require_text(row.cells[4], table.path, row.line, state, "未来内容归属")
-        record_valid = (
+        closure_fields_valid = (
             table.structure_valid
             and owner_valid
             and sequence_valid
             and chapters_valid
             and milestone is not None
         )
-        if record_valid:
+        if table.structure_valid:
+            state.project_record_candidates.append(
+                _ProjectRecordCandidate(
+                    "project",
+                    project,
+                    raw_key,
+                    expected,
+                    frozenset(chapters) if chapters_valid else None,
+                    table.path,
+                    row.line,
+                    closure_fields_valid,
+                    True,
+                )
+            )
+        if closure_fields_valid:
             _record_anchor_definition(milestone, table.path, row.line, state)
             state.project_mappings[milestone] = chapters
             state.project_locations[milestone] = (table.path, row.line)
-        elif table.structure_valid:
-            _exclude_project_record(
-                state,
-                side="project",
-                owner=project,
-                raw_key=raw_key,
-                expected_key=expected,
-            )
 
 
 def _validate_projects(root: Path, state: _OutlineState, *, required: bool) -> None:
@@ -2002,36 +2075,68 @@ def _validate_projects(root: Path, state: _OutlineState, *, required: bool) -> N
             state.invalid_project_tables.add(project)
 
 
-def _project_record_is_excluded(
-    key: str, state: _OutlineState, *, side: str
+def _candidate_explains_project_reference(
+    candidate: _ProjectRecordCandidate,
+    reference: _AnchorReference,
 ) -> bool:
-    return any(
-        exclusion.side == side and exclusion.matches(key)
-        for exclusion in state.project_record_exclusions
+    if candidate.side != "project" or candidate.closure_fields_valid:
+        return False
+    reference_owner = reference.owner or _project_key_owner(reference.anchor)
+    expected_match = (
+        candidate.owner is not None
+        and reference_owner == candidate.owner
+        and reference.anchor == candidate.expected_key
+    )
+    raw_relation_match = (
+        reference.source == "chapter"
+        and candidate.raw_key is not None
+        and reference.anchor == candidate.raw_key
+        and candidate.chapters is not None
+        and reference.related_chapters is not None
+        and not candidate.chapters.isdisjoint(reference.related_chapters)
+    )
+    return expected_match or raw_relation_match
+
+
+def _candidate_explains_missing_view(
+    candidate: _ProjectRecordCandidate,
+    milestone: str,
+) -> bool:
+    return (
+        candidate.side == "view"
+        and not candidate.closure_fields_valid
+        and candidate.identity_stable
+        and candidate.owner is not None
+        and candidate.expected_key == milestone
+        and _project_key_owner(milestone) == candidate.owner
     )
 
 
-def _project_side_is_comparable(key: str, state: _OutlineState) -> bool:
-    owner = _project_key_owner(key)
-    if owner is not None and owner in state.invalid_project_tables:
-        return False
-    return not _project_record_is_excluded(key, state, side="project")
-
-
 def _validate_anchor_and_project_closure(state: _OutlineState) -> None:
-    for anchor, path, line in state.anchor_references:
-        if anchor in state.anchor_definitions:
+    for reference in state.anchor_references:
+        if reference.anchor in state.anchor_definitions:
             continue
-        if anchor.startswith("CP-") and not state.checkpoint_definitions_comparable:
-            continue
-        if anchor.startswith("PRJ-") and not _project_side_is_comparable(
-            anchor, state
+        if (
+            reference.anchor.startswith("CP-")
+            and not state.checkpoint_definitions_comparable
         ):
             continue
-        if anchor not in state.anchor_definitions:
-            _add_outline_error(
-                state, path, line, "OL010", f"引用的实践锚点 {anchor} 不存在"
-            )
+        if reference.anchor.startswith("PRJ-"):
+            owner = reference.owner or _project_key_owner(reference.anchor)
+            if owner is not None and owner in state.invalid_project_tables:
+                continue
+            if any(
+                _candidate_explains_project_reference(candidate, reference)
+                for candidate in state.project_record_candidates
+            ):
+                continue
+        _add_outline_error(
+            state,
+            reference.path,
+            reference.line,
+            "OL010",
+            f"引用的实践锚点 {reference.anchor} 不存在",
+        )
 
     for milestone, chapters in sorted(state.project_mappings.items()):
         path, line = state.project_locations[milestone]
@@ -2050,8 +2155,23 @@ def _validate_anchor_and_project_closure(state: _OutlineState) -> None:
             anchor for anchor in chapter.anchors if anchor.startswith("PRJ-")
         ):
             mapping = state.project_mappings.get(milestone)
-            if mapping is None and not _project_side_is_comparable(milestone, state):
-                continue
+            if mapping is None:
+                owner = _project_key_owner(milestone)
+                if owner is not None and owner in state.invalid_project_tables:
+                    continue
+                reference = _AnchorReference(
+                    milestone,
+                    chapter.path,
+                    chapter.line,
+                    "chapter",
+                    owner,
+                    frozenset({chapter.chapter_id}),
+                )
+                if any(
+                    _candidate_explains_project_reference(candidate, reference)
+                    for candidate in state.project_record_candidates
+                ):
+                    continue
             if chapter.chapter_id not in (mapping or set()):
                 _add_outline_error(
                     state,
@@ -2065,7 +2185,10 @@ def _validate_anchor_and_project_closure(state: _OutlineState) -> None:
             milestone for milestone, _, _, _ in state.project_view_records
         }
         for milestone in sorted(state.project_mappings.keys() - view_milestones):
-            if _project_record_is_excluded(milestone, state, side="view"):
+            if any(
+                _candidate_explains_missing_view(candidate, milestone)
+                for candidate in state.project_record_candidates
+            ):
                 continue
             path, line = state.project_locations[milestone]
             _add_outline_error(

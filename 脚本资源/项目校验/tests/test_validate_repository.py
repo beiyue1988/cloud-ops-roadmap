@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 import contextlib
+import hashlib
 import importlib.util
 import inspect
 import io
@@ -1261,34 +1262,357 @@ class OutlineGateTests(RepositoryFixture):
             errors,
         )
 
-    def test_catalog_cycles_has_no_post_normalization_comparison_sort(self) -> None:
-        graph = {"C": ("A",), "A": ("B",), "B": ("C",)}
+    def test_partial_missing_separator_preserves_first_data_row_diagnostics(
+        self,
+    ) -> None:
+        violations: list[str] = []
+        cases = ("missing-separator", "malformed-separator-shape")
+        for case in cases:
+            with self.subTest(case=case):
+                with tempfile.TemporaryDirectory() as directory:
+                    fixture = type(self)("runTest")
+                    fixture.root = Path(directory)
+                    rows = [
+                        fixture.stage_row(0, title="<br>"),
+                        fixture.stage_row(0, 2, prerequisites="`00.01`"),
+                    ]
+                    path = fixture.write_stage(0, rows)
+                    lines = path.read_text(encoding="utf-8").splitlines()
+                    separator_index = next(
+                        index for index, line in enumerate(lines) if line.startswith("|---")
+                    )
+                    if case == "missing-separator":
+                        del lines[separator_index]
+                    else:
+                        lines[separator_index] = (
+                            "|:-:|--:|:--|:-|--|:-:|--|:--:|:-|"
+                        )
+                    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
+                    errors = fixture.outline("partial")
+                    separator_errors = [
+                        error
+                        for error in errors
+                        if " OL002 " in error and "分隔行非法" in error
+                    ]
+                    if len(separator_errors) != 1:
+                        violations.append(f"{case}: separator={separator_errors!r}")
+                    if case == "missing-separator":
+                        title_errors = [
+                            error
+                            for error in errors
+                            if " OL005 " in error and "标题" in error
+                        ]
+                        if len(title_errors) != 1:
+                            violations.append(
+                                f"missing-separator: title={title_errors!r}; errors={errors!r}"
+                            )
+                        if any(
+                            " OL003 " in error and "应连续为 00.01" in error
+                            for error in errors
+                        ):
+                            violations.append(
+                                f"missing-separator: compressed-position={errors!r}"
+                            )
+                    else:
+                        separator_line = separator_index + 1
+                        direct_from_separator = [
+                            error
+                            for error in errors
+                            if f":{separator_line}:" in error
+                            and any(
+                                f" {rule} " in error
+                                for rule in ("OL003", "OL004", "OL005", "OL010")
+                            )
+                        ]
+                        if direct_from_separator:
+                            violations.append(
+                                "malformed-separator-shape: "
+                                f"data-diagnostics={direct_from_separator!r}"
+                            )
+                    temporary_root = Path(directory)
+                if temporary_root.exists():
+                    violations.append(f"{case}: temporary directory not cleaned")
+        self.assertEqual(violations, [])
+
+    def test_complete_invalid_view_key_does_not_suppress_foreign_project_gap(
+        self,
+    ) -> None:
+        self.build_complete()
+        path = self.root / "学习路线/06-贯穿项目演进线.md"
+        text = path.read_text(encoding="utf-8")
+        text = text.replace("`PRJ-01-M01`", "`PRJ-02-M01`", 1)
+        text = text.replace(
+            "| 项目 02 | `PRJ-02-M01` | `13.01` | 验证记录 |\n", "", 1
+        )
+        path.write_text(text, encoding="utf-8")
+
+        errors = self.outline("complete")
+
+        direct = [
+            error
+            for error in errors
+            if error.startswith("学习路线/06-贯穿项目演进线.md:")
+            and " OL010 " in error
+            and "项目演进视图里程碑应属于项目 01" in error
+        ]
+        foreign_gap = [
+            error
+            for error in errors
+            if error.startswith("项目实战/02-Docker容器化改造/README.md:")
+            and " OL011 " in error
+            and "PRJ-02-M01 未出现在贯穿项目视图" in error
+        ]
+        self.assertEqual(len(direct), 1, errors)
+        self.assertEqual(len(foreign_gap), 1, errors)
+
+    def test_complete_invalid_project_key_scopes_chapter_reference_by_relation(
+        self,
+    ) -> None:
+        violations: list[str] = []
+        for case in ("different-chapter", "same-chapter-different-source"):
+            with self.subTest(case=case):
+                with tempfile.TemporaryDirectory() as directory:
+                    fixture = type(self)("runTest")
+                    fixture.root = Path(directory)
+                    fixture.build_complete()
+                    fixture.write_text(
+                        "项目实战/01-若依传统部署/README.md",
+                        "# 项目 01\n\n"
+                        + controlled_table(
+                            (
+                                "里程碑",
+                                "能力结果",
+                                "所需章节",
+                                "证据类型",
+                                "未来内容归属",
+                            ),
+                            [
+                                [
+                                    "`PRJ-01-M01`",
+                                    "完成能力结果",
+                                    "`09.01`",
+                                    "验证记录",
+                                    "后续项目任务",
+                                ],
+                                [
+                                    "`PRJ-02-M02`",
+                                    "错误归属",
+                                    "`08.01`",
+                                    "验证记录",
+                                    "后续项目任务",
+                                ],
+                            ],
+                        ),
+                    )
+                    fixture.write_stage(
+                        8, [fixture.stage_row(8, anchors="`PRJ-02-M02`")]
+                    )
+                    related_chapter = "13.01" if case == "different-chapter" else "08.01"
+                    if case == "different-chapter":
+                        fixture.write_stage(
+                            13,
+                            [
+                                fixture.stage_row(
+                                    13,
+                                    anchors="`PRJ-02-M01`, `PRJ-02-M02`",
+                                )
+                            ],
+                        )
+                    view_path = fixture.root / "学习路线/06-贯穿项目演进线.md"
+                    row = "| 项目 02 | `PRJ-02-M01` | `13.01` | 验证记录 |\n"
+                    view_path.write_text(
+                        view_path.read_text(encoding="utf-8").replace(
+                            row,
+                            row
+                            + "| 项目 02 | `PRJ-02-M02` | "
+                            + f"`{related_chapter}` | 验证记录 |\n",
+                            1,
+                        ),
+                        encoding="utf-8",
+                    )
+
+                    errors = fixture.outline("complete")
+                    direct = [
+                        error
+                        for error in errors
+                        if error.startswith(
+                            "项目实战/01-若依传统部署/README.md:"
+                        )
+                        and " OL010 " in error
+                        and "预期 PRJ-01-M02" in error
+                    ]
+                    if len(direct) != 1:
+                        violations.append(f"{case}: direct={direct!r}")
+                    stage_eight_cascade = [
+                        error
+                        for error in errors
+                        if error.startswith(
+                            "知识库/08-Shell与Python/README.md:"
+                        )
+                        and "PRJ-02-M02" in error
+                        and (" OL010 " in error or " OL011 " in error)
+                    ]
+                    if stage_eight_cascade:
+                        violations.append(
+                            f"{case}: stage-eight-cascade={stage_eight_cascade!r}"
+                        )
+                    if case == "different-chapter":
+                        stage_thirteen_missing = [
+                            error
+                            for error in errors
+                            if error.startswith(
+                                "知识库/13-Docker容器/README.md:"
+                            )
+                            and " OL010 " in error
+                            and "PRJ-02-M02 不存在" in error
+                        ]
+                        stage_thirteen_unlisted = [
+                            error
+                            for error in errors
+                            if error.startswith(
+                                "知识库/13-Docker容器/README.md:"
+                            )
+                            and " OL011 " in error
+                            and "PRJ-02-M02" in error
+                            and "13.01" in error
+                        ]
+                        if len(stage_thirteen_missing) != 1:
+                            violations.append(
+                                f"different-chapter: missing={stage_thirteen_missing!r}; errors={errors!r}"
+                            )
+                        if len(stage_thirteen_unlisted) != 1:
+                            violations.append(
+                                "different-chapter: "
+                                f"unlisted={stage_thirteen_unlisted!r}; errors={errors!r}"
+                            )
+                    else:
+                        view_missing = [
+                            error
+                            for error in errors
+                            if error.startswith(
+                                "学习路线/06-贯穿项目演进线.md:"
+                            )
+                            and " OL010 " in error
+                            and "PRJ-02-M02 不存在" in error
+                        ]
+                        if len(view_missing) != 1:
+                            violations.append(
+                                "same-chapter-different-source: "
+                                f"view-missing={view_missing!r}; errors={errors!r}"
+                            )
+                    temporary_root = Path(directory)
+                if temporary_root.exists():
+                    violations.append(f"{case}: temporary directory not cleaned")
+        self.assertEqual(violations, [])
+
+    def test_complete_unstable_view_identity_stops_only_view_comparison(
+        self,
+    ) -> None:
+        self.build_complete()
+        view_path = self.root / "学习路线/06-贯穿项目演进线.md"
+        view_path.write_text(
+            view_path.read_text(encoding="utf-8").replace(
+                "`PRJ-01-M01`", "`BROKEN`", 1
+            ),
+            encoding="utf-8",
+        )
+        self.write_stage(13, [self.stage_row(13, anchors="—")])
+
+        errors = self.outline("complete")
+
+        direct = [
+            error
+            for error in errors
+            if error.startswith("学习路线/06-贯穿项目演进线.md:")
+            and " OL010 " in error
+            and "项目演进视图的里程碑" in error
+        ]
+        unstable_view_gap = [
+            error
+            for error in errors
+            if " OL011 " in error
+            and "PRJ-01-M01 未出现在贯穿项目视图" in error
+        ]
+        independent_gap = [
+            error
+            for error in errors
+            if error.startswith("项目实战/02-Docker容器化改造/README.md:")
+            and " OL011 " in error
+            and "PRJ-02-M01" in error
+            and "13.01" in error
+            and "章节未反向引用" in error
+        ]
+        self.assertEqual(len(direct), 1, errors)
+        self.assertEqual(unstable_view_gap, [], errors)
+        self.assertEqual(len(independent_gap), 1, errors)
+
+    def test_catalog_cycles_has_no_post_normalization_comparison_sort(self) -> None:
+        class ComparableId(str):
+            comparisons = 0
+
+            def __lt__(self, other: object) -> bool:
+                type(self).comparisons += 1
+                return str.__lt__(self, other)
+
+        nodes = [ComparableId(f"N-{index:03d}") for index in range(256)]
+        graph = {
+            node: (nodes[(int(node[-3:]) + 1) % len(nodes)],)
+            for node in reversed(nodes)
+        }
+
+        ComparableId.comparisons = 0
         first = validator._catalog_cycles(graph)
+        first_comparisons = ComparableId.comparisons
+        ComparableId.comparisons = 0
         second = validator._catalog_cycles(graph)
+        second_comparisons = ComparableId.comparisons
 
         self.assertEqual(first, second)
-        self.assertEqual(first, [("A", "B", "C")])
-        source = inspect.getsource(validator._catalog_cycles)
-        tree = ast.parse(source)
+        self.assertEqual(len(first), 1)
+        self.assertEqual(len(first[0]), 256)
+        self.assertEqual(len(set(first[0])), 256)
+        self.assertEqual(first[0][0], "N-000")
+        self.assertEqual(first_comparisons, 255)
+        self.assertEqual(second_comparisons, 255)
+
+        tree = ast.parse(MODULE_PATH.read_text(encoding="utf-8"))
+        function_node = next(
+            node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef) and node.name == "_catalog_cycles"
+        )
+        function_dump = ast.dump(function_node, include_attributes=False)
+        self.assertEqual(
+            hashlib.sha256(function_dump.encode("utf-8")).hexdigest(),
+            "705deb57eb4a09333016b64c8d451d2df363fb74daa073fdafc000033d98d604",
+        )
         reverse_assignment = next(
             node
-            for node in ast.walk(tree)
+            for node in ast.walk(function_node)
             if isinstance(node, ast.Assign)
             and any(
                 isinstance(target, ast.Name) and target.id == "reverse"
                 for target in node.targets
             )
         )
-        post_normalization_sorts = [
-            node.lineno
-            for node in ast.walk(tree)
+        post_normalization_forbidden_calls = [
+            (node.lineno, ast.unparse(node.func))
+            for node in ast.walk(function_node)
             if isinstance(node, ast.Call)
-            and isinstance(node.func, ast.Name)
-            and node.func.id == "sorted"
             and node.lineno > reverse_assignment.lineno
+            and (
+                isinstance(node.func, ast.Name)
+                and node.func.id in {"sorted", "min", "max"}
+                or isinstance(node.func, ast.Attribute)
+                and (
+                    node.func.attr == "sort"
+                    or isinstance(node.func.value, ast.Name)
+                    and node.func.value.id == "heapq"
+                )
+            )
         ]
-        self.assertEqual(post_normalization_sorts, [])
+        self.assertEqual(post_normalization_forbidden_calls, [])
 
     def test_complete_rejects_all_controlled_tables_inside_fences(self) -> None:
         self.build_complete()
