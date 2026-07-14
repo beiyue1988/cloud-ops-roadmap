@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import ast
 import contextlib
 import importlib.util
+import inspect
 import io
 import sys
 import tempfile
@@ -916,6 +918,377 @@ class OutlineGateTests(RepositoryFixture):
     def test_complete_accepts_closed_anchors_and_projects(self) -> None:
         self.build_complete()
         self.assertEqual(self.outline("complete"), [])
+
+    def test_partial_malformed_stage_table_preserves_direct_row_diagnostics(
+        self,
+    ) -> None:
+        rows = [
+            self.stage_row(0),
+            self.stage_row(0, 2, prerequisites="`00.01`", title="<br>"),
+        ]
+        path = self.write_stage(0, rows)
+        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+        bad_index = next(
+            index for index, line in enumerate(lines) if "`00.01`" in line
+        )
+        lines[bad_index] = lines[bad_index][1:]
+        path.write_text("".join(lines), encoding="utf-8")
+
+        errors = self.outline("partial")
+
+        self.assertTrue(
+            any(" OL002 " in error and "数据行列数或边界非法" in error for error in errors),
+            errors,
+        )
+        self.assertTrue(
+            any(" OL005 " in error and "标题" in error for error in errors), errors
+        )
+        self.assertFalse(
+            any(" OL003 " in error and "00.01" in error for error in errors), errors
+        )
+
+    def test_views_malformed_table_preserves_direct_row_diagnostics(self) -> None:
+        self.build_views()
+        path = self.write_text(
+            "技术索引/按技术名称.md",
+            "# 按技术名称\n\n"
+            + controlled_table(
+                ("技术主词", "别名", "章节 ID"),
+                [["Linux", "GNU/Linux", "`00.01`"], ["", "空主词", "`01.01`"]],
+            ),
+        )
+        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+        bad_index = next(
+            index for index, line in enumerate(lines) if "GNU/Linux" in line
+        )
+        lines[bad_index] = lines[bad_index][1:]
+        path.write_text("".join(lines), encoding="utf-8")
+
+        errors = self.outline("views")
+
+        self.assertTrue(
+            any(" OL002 " in error and "数据行列数或边界非法" in error for error in errors),
+            errors,
+        )
+        self.assertTrue(
+            any(" OL002 " in error and "技术主词" in error for error in errors), errors
+        )
+
+    def test_complete_malformed_project_view_preserves_other_direct_diagnostics(
+        self,
+    ) -> None:
+        self.build_complete()
+        path = self.root / "学习路线/06-贯穿项目演进线.md"
+        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+        bad_index = next(
+            index for index, line in enumerate(lines) if "`PRJ-01-M01`" in line
+        )
+        lines[bad_index] = lines[bad_index][1:]
+        other_index = next(
+            index for index, line in enumerate(lines) if "`PRJ-02-M01`" in line
+        )
+        lines[other_index] = lines[other_index].replace("| 项目 02 |", "|  |", 1)
+        path.write_text("".join(lines), encoding="utf-8")
+
+        errors = self.outline("complete")
+
+        self.assertTrue(
+            any(" OL002 " in error and "数据行列数或边界非法" in error for error in errors),
+            errors,
+        )
+        self.assertTrue(
+            any(
+                " OL002 " in error
+                and "项目" in error
+                and "单行非空文本" in error
+                for error in errors
+            ),
+            errors,
+        )
+
+    def test_complete_malformed_project_table_preserves_other_direct_diagnostics(
+        self,
+    ) -> None:
+        self.build_complete()
+        path = self.root / "项目实战/01-若依传统部署/README.md"
+        path.write_text(
+            "# 项目 01\n\n"
+            + controlled_table(
+                ("里程碑", "能力结果", "所需章节", "证据类型", "未来内容归属"),
+                [
+                    ["`PRJ-01-M01`", "完成能力结果", "`09.01`", "验证记录", "后续项目任务"],
+                    ["`PRJ-01-M02`", "", "`08.01`", "验证记录", "后续项目任务"],
+                ],
+            ),
+            encoding="utf-8",
+        )
+        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+        bad_index = next(
+            index for index, line in enumerate(lines) if "`PRJ-01-M01`" in line
+        )
+        lines[bad_index] = lines[bad_index][1:]
+        path.write_text("".join(lines), encoding="utf-8")
+
+        errors = self.outline("complete")
+
+        self.assertTrue(
+            any(" OL002 " in error and "数据行列数或边界非法" in error for error in errors),
+            errors,
+        )
+        self.assertTrue(
+            any(" OL002 " in error and "能力结果" in error for error in errors), errors
+        )
+        self.assertFalse(
+            any(" OL010 " in error and "预期 PRJ-01-M01" in error for error in errors),
+            errors,
+        )
+
+    def test_complete_malformed_checkpoint_does_not_derive_anchor_errors(
+        self,
+    ) -> None:
+        self.build_complete()
+        self.write_stage(0, [self.stage_row(0, anchors="`CP-00`")])
+        path = self.write_text(
+            "学习路线/阶段检查点/README.md",
+            "# 阶段检查点\n\n"
+            + controlled_table(
+                ("检查点", "阶段", "所需章节", "实践锚点", "能力结果"),
+                [
+                    ["`CP-00`", "`00`", "`00.01`", "—", "完成阶段能力"],
+                    ["`CP-01`", "`01`", "`01.01`", "—", ""],
+                ],
+            ),
+        )
+        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+        bad_index = next(
+            index for index, line in enumerate(lines) if "`CP-00`" in line
+        )
+        lines[bad_index] = lines[bad_index][1:]
+        path.write_text("".join(lines), encoding="utf-8")
+
+        errors = self.outline("complete")
+
+        self.assertTrue(
+            any(" OL002 " in error and "数据行列数或边界非法" in error for error in errors),
+            errors,
+        )
+        self.assertTrue(
+            any(" OL002 " in error and "能力结果" in error for error in errors), errors
+        )
+        self.assertFalse(
+            any(" OL010 " in error and "CP-00 不存在" in error for error in errors),
+            errors,
+        )
+        self.assertFalse(
+            any(" OL010 " in error and "应按 CP-00" in error for error in errors),
+            errors,
+        )
+
+    def test_complete_invalid_view_record_preserves_unrelated_missing_milestone(
+        self,
+    ) -> None:
+        self.build_complete()
+        path = self.root / "学习路线/06-贯穿项目演进线.md"
+        text = path.read_text(encoding="utf-8")
+        text = text.replace("`09.01`", "09.01", 1)
+        text = text.replace(
+            "| 项目 05 | `PRJ-05-M01` | `18.01` | 验证记录 |\n", "", 1
+        )
+        path.write_text(text, encoding="utf-8")
+
+        errors = self.outline("complete")
+
+        self.assertTrue(any(" OL002 " in error for error in errors), errors)
+        self.assertTrue(
+            any(" OL011 " in error and "PRJ-05-M01" in error for error in errors),
+            errors,
+        )
+
+    def test_complete_invalid_project_record_preserves_unrelated_missing_milestone(
+        self,
+    ) -> None:
+        self.build_complete()
+        project_path = self.root / "项目实战/01-若依传统部署/README.md"
+        project_path.write_text(
+            project_path.read_text(encoding="utf-8").replace("`09.01`", "09.01", 1),
+            encoding="utf-8",
+        )
+        view_path = self.root / "学习路线/06-贯穿项目演进线.md"
+        view_path.write_text(
+            view_path.read_text(encoding="utf-8").replace(
+                "| 项目 05 | `PRJ-05-M01` | `18.01` | 验证记录 |\n", "", 1
+            ),
+            encoding="utf-8",
+        )
+
+        errors = self.outline("complete")
+
+        self.assertTrue(any(" OL002 " in error for error in errors), errors)
+        self.assertTrue(
+            any(" OL011 " in error and "PRJ-05-M01" in error for error in errors),
+            errors,
+        )
+
+    def test_complete_invalid_view_milestone_preserves_unrelated_missing_milestone(
+        self,
+    ) -> None:
+        self.build_complete()
+        path = self.root / "学习路线/06-贯穿项目演进线.md"
+        text = path.read_text(encoding="utf-8")
+        text = text.replace("`PRJ-01-M01`", "`PRJ-99-M01`", 1)
+        text = text.replace(
+            "| 项目 05 | `PRJ-05-M01` | `18.01` | 验证记录 |\n", "", 1
+        )
+        path.write_text(text, encoding="utf-8")
+
+        errors = self.outline("complete")
+
+        self.assertTrue(any(" OL010 " in error for error in errors), errors)
+        self.assertTrue(
+            any(" OL011 " in error and "PRJ-05-M01" in error for error in errors),
+            errors,
+        )
+
+    def test_complete_wrong_project_milestone_emits_only_direct_error(self) -> None:
+        cases = ("without-legal-same-name", "with-legal-same-name")
+        observed: dict[str, list[str]] = {}
+        for case in cases:
+            with self.subTest(case=case):
+                self.build_complete()
+                self.write_text(
+                    "项目实战/01-若依传统部署/README.md",
+                    "# 项目 01\n\n"
+                    + controlled_table(
+                        ("里程碑", "能力结果", "所需章节", "证据类型", "未来内容归属"),
+                        [
+                            ["`PRJ-01-M01`", "完成能力结果", "`09.01`", "验证记录", "后续项目任务"],
+                            ["`PRJ-02-M02`", "错误归属", "`08.01`", "验证记录", "后续项目任务"],
+                        ],
+                    ),
+                )
+                if case == "without-legal-same-name":
+                    self.write_stage(8, [self.stage_row(8, anchors="`PRJ-02-M02`")])
+                else:
+                    self.write_text(
+                        "项目实战/02-Docker容器化改造/README.md",
+                        "# 项目 02\n\n"
+                        + controlled_table(
+                            ("里程碑", "能力结果", "所需章节", "证据类型", "未来内容归属"),
+                            [
+                                ["`PRJ-02-M01`", "完成能力结果", "`13.01`", "验证记录", "后续项目任务"],
+                                ["`PRJ-02-M02`", "合法定义", "`08.01`", "验证记录", "后续项目任务"],
+                            ],
+                        ),
+                    )
+                    view_path = self.root / "学习路线/06-贯穿项目演进线.md"
+                    row = "| 项目 02 | `PRJ-02-M01` | `13.01` | 验证记录 |\n"
+                    view_path.write_text(
+                        view_path.read_text(encoding="utf-8").replace(
+                            row,
+                            row
+                            + "| 项目 02 | `PRJ-02-M02` | `08.01` | 验证记录 |\n",
+                            1,
+                        ),
+                        encoding="utf-8",
+                    )
+
+                errors = self.outline("complete")
+                observed[case] = errors
+
+        violations: list[str] = []
+        without_legal = observed["without-legal-same-name"]
+        with_legal = observed["with-legal-same-name"]
+        for case, errors in observed.items():
+            direct = [
+                error
+                for error in errors
+                if " OL010 " in error and "预期 PRJ-01-M02" in error
+            ]
+            if len(direct) != 1:
+                violations.append(f"{case}: direct={direct!r}")
+            if any("重复定义" in error for error in errors):
+                violations.append(f"{case}: duplicate={errors!r}")
+        if len(without_legal) != 1:
+            violations.append(f"without-legal-same-name: errors={without_legal!r}")
+        legal_gaps = [
+            error
+            for error in with_legal
+            if " OL011 " in error and "PRJ-02-M02" in error
+        ]
+        if len(legal_gaps) != 1 or len(with_legal) != 2:
+            violations.append(f"with-legal-same-name: errors={with_legal!r}")
+        self.assertEqual(violations, [])
+
+    def test_complete_invalid_sibling_milestone_preserves_valid_mapping_error(
+        self,
+    ) -> None:
+        self.build_complete()
+        self.write_stage(8, [self.stage_row(8, anchors="`PRJ-01-M01`")])
+        self.write_text(
+            "项目实战/01-若依传统部署/README.md",
+            "# 项目 01\n\n"
+            + controlled_table(
+                ("里程碑", "能力结果", "所需章节", "证据类型", "未来内容归属"),
+                [
+                    ["`PRJ-01-M01`", "完成能力结果", "`08.01`", "验证记录", "后续项目任务"],
+                    ["`PRJ-01-M03`", "非法兄弟", "`08.01`", "验证记录", "后续项目任务"],
+                ],
+            ),
+        )
+        view_path = self.root / "学习路线/06-贯穿项目演进线.md"
+        view_path.write_text(
+            view_path.read_text(encoding="utf-8").replace(
+                "| 项目 01 | `PRJ-01-M01` | `09.01` |",
+                "| 项目 01 | `PRJ-01-M01` | `08.01` |",
+                1,
+            ),
+            encoding="utf-8",
+        )
+
+        errors = self.outline("complete")
+
+        self.assertTrue(
+            any(" OL010 " in error and "预期 PRJ-01-M02" in error for error in errors),
+            errors,
+        )
+        self.assertTrue(
+            any(
+                " OL011 " in error
+                and "PRJ-01-M01" in error
+                and "09.01" in error
+                for error in errors
+            ),
+            errors,
+        )
+
+    def test_catalog_cycles_has_no_post_normalization_comparison_sort(self) -> None:
+        graph = {"C": ("A",), "A": ("B",), "B": ("C",)}
+
+        first = validator._catalog_cycles(graph)
+        second = validator._catalog_cycles(graph)
+
+        self.assertEqual(first, second)
+        self.assertEqual(first, [("A", "B", "C")])
+        source = inspect.getsource(validator._catalog_cycles)
+        tree = ast.parse(source)
+        reverse_assignment = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "reverse"
+                for target in node.targets
+            )
+        )
+        post_normalization_sorts = [
+            node.lineno
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "sorted"
+            and node.lineno > reverse_assignment.lineno
+        ]
+        self.assertEqual(post_normalization_sorts, [])
 
     def test_complete_rejects_all_controlled_tables_inside_fences(self) -> None:
         self.build_complete()

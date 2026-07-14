@@ -231,6 +231,7 @@ class _RepositoryResult:
 class _TableRow:
     cells: tuple[str, ...]
     line: int
+    position: int
 
 
 @dataclass(frozen=True)
@@ -253,6 +254,17 @@ class _Chapter:
     line: int
 
 
+@dataclass(frozen=True)
+class _ProjectRecordExclusion:
+    side: str
+    owner: int | None
+    raw_key: str | None
+    expected_key: str | None
+
+    def matches(self, key: str) -> bool:
+        return key in {self.raw_key, self.expected_key}
+
+
 @dataclass
 class _OutlineState:
     diagnostics: list[Diagnostic] = field(default_factory=list)
@@ -269,8 +281,11 @@ class _OutlineState:
         default_factory=list
     )
     project_view_milestones_comparable: bool = False
-    invalid_project_numbers: set[int] = field(default_factory=set)
-    invalid_project_milestones: set[str] = field(default_factory=set)
+    project_record_exclusions: list[_ProjectRecordExclusion] = field(
+        default_factory=list
+    )
+    invalid_project_tables: set[int] = field(default_factory=set)
+    checkpoint_definitions_comparable: bool = False
 
 
 @dataclass(frozen=True)
@@ -881,6 +896,7 @@ def _parse_controlled_table(
             _add_outline_error(state, relative, 0, "OL001", "当前门禁缺少规定表格")
         return None
 
+    structure_valid = True
     header = _split_table_cells(lines[header_index])
     if header != expected_headers:
         _add_outline_error(
@@ -890,7 +906,7 @@ def _parse_controlled_table(
             "OL002",
             "受控表格表头与批准合同不一致",
         )
-        return None
+        structure_valid = False
     separator_index = header_index + 1
     separator = (
         _split_table_cells(lines[separator_index]) if separator_index < stop else None
@@ -907,11 +923,11 @@ def _parse_controlled_table(
             "OL002",
             "受控表格分隔行非法",
         )
-        return None
+        structure_valid = False
 
     rows: list[_TableRow] = []
-    structure_valid = True
     index = separator_index + 1
+    position = 1
     while index < stop and lines[index].strip():
         cells = _split_table_cells(lines[index])
         if cells is None or len(cells) != len(expected_headers):
@@ -924,8 +940,9 @@ def _parse_controlled_table(
             )
             structure_valid = False
         else:
-            rows.append(_TableRow(cells, index + 1))
+            rows.append(_TableRow(cells, index + 1, position))
         index += 1
+        position += 1
     if not rows:
         if structure_valid:
             _add_outline_error(
@@ -983,8 +1000,9 @@ def _chapter_order(chapter_id: str) -> tuple[int, int]:
 def _parse_stage_table(
     table: _ControlledTable, stage: int, state: _OutlineState
 ) -> None:
-    state.catalog_count += 1
-    for position, row in enumerate(table.rows, start=1):
+    if table.structure_valid:
+        state.catalog_count += 1
+    for row in table.rows:
         cells = row.cells
         identifier_match = OUTLINE_ID_RE.fullmatch(cells[0])
         chapter_id = identifier_match.group("value") if identifier_match else None
@@ -1002,13 +1020,13 @@ def _parse_stage_table(
                     "OL003",
                     f"章节 ID {chapter_id} 与阶段 {stage:02d} 不一致",
                 )
-            if identifier_chapter != position:
+            if table.structure_valid and identifier_chapter != row.position:
                 _add_outline_error(
                     state,
                     table.path,
                     row.line,
                     "OL003",
-                    f"阶段内章节序号应连续为 {stage:02d}.{position:02d}",
+                    f"阶段内章节序号应连续为 {stage:02d}.{row.position:02d}",
                 )
 
         filename_match = OUTLINE_FILENAME_RE.fullmatch(cells[1])
@@ -1070,7 +1088,7 @@ def _parse_stage_table(
         elif len(set(anchors)) != len(anchors):
             _add_outline_error(state, table.path, row.line, "OL010", "实践锚点重复")
 
-        if chapter_id is not None:
+        if table.structure_valid and chapter_id is not None:
             chapter = _Chapter(
                 chapter_id,
                 stage,
@@ -1131,22 +1149,25 @@ def _load_stage_catalog(
         end=end,
         required=True,
     )
-    if table is not None and table.structure_valid:
+    if table is not None:
         _parse_stage_table(table, stage, state)
 
 
 def _catalog_cycles(graph: dict[str, tuple[str, ...]]) -> list[tuple[str, ...]]:
+    node_order = tuple(sorted(graph))
+    rank = {chapter_id: index for index, chapter_id in enumerate(node_order)}
     adjacency = {
         chapter_id: tuple(
             sorted(
                 {
                     prerequisite
-                    for prerequisite in prerequisites
-                    if prerequisite in graph
-                }
+                    for prerequisite in graph[chapter_id]
+                    if prerequisite in rank
+                },
+                key=rank.__getitem__,
             )
         )
-        for chapter_id, prerequisites in sorted(graph.items())
+        for chapter_id in node_order
     }
     reverse_lists: dict[str, list[str]] = {
         chapter_id: [] for chapter_id in adjacency
@@ -1179,25 +1200,42 @@ def _catalog_cycles(graph: dict[str, tuple[str, ...]]) -> list[tuple[str, ...]]:
                 visited.add(neighbor)
                 frames.append((neighbor, 0))
 
-    assigned: set[str] = set()
-    components: list[tuple[str, ...]] = []
+    component_by_node: dict[str, int] = {}
+    component_sizes: list[int] = []
+    component_has_self_loop: list[bool] = []
     for chapter_id in reversed(finish_order):
-        if chapter_id in assigned:
+        if chapter_id in component_by_node:
             continue
-        assigned.add(chapter_id)
-        members: list[str] = []
+        component = len(component_sizes)
+        component_by_node[chapter_id] = component
+        size = 0
+        has_self_loop = False
         pending = [chapter_id]
         while pending:
             current = pending.pop()
-            members.append(current)
+            size += 1
+            if current in adjacency[current]:
+                has_self_loop = True
             for neighbor in reversed(reverse[current]):
-                if neighbor not in assigned:
-                    assigned.add(neighbor)
+                if neighbor not in component_by_node:
+                    component_by_node[neighbor] = component
                     pending.append(neighbor)
-        component = tuple(sorted(members))
-        if len(component) > 1 or component[0] in adjacency[component[0]]:
-            components.append(component)
-    return sorted(components)
+        component_sizes.append(size)
+        component_has_self_loop.append(has_self_loop)
+
+    buckets: list[list[str]] = [[] for _ in component_sizes]
+    for chapter_id in node_order:
+        buckets[component_by_node[chapter_id]].append(chapter_id)
+    cyclic_components: list[tuple[str, ...]] = []
+    emitted: set[int] = set()
+    for chapter_id in node_order:
+        component = component_by_node[chapter_id]
+        if component in emitted:
+            continue
+        emitted.add(component)
+        if component_sizes[component] > 1 or component_has_self_loop[component]:
+            cyclic_components.append(tuple(buckets[component]))
+    return cyclic_components
 
 
 def _finalize_catalogs(state: _OutlineState) -> None:
@@ -1302,6 +1340,7 @@ def _parse_view_chapters(
     state: _OutlineState,
     *,
     allow_empty: bool = True,
+    register: bool = True,
 ) -> tuple[tuple[str, ...], bool]:
     chapters = _parse_controlled_list(value, OUTLINE_ID_RE)
     if chapters is None or (not allow_empty and not chapters):
@@ -1313,7 +1352,8 @@ def _parse_view_chapters(
             "章节引用必须为 — 或逗号加空格分隔的反引号章节 ID",
         )
         return (), False
-    state.view_reference_count += len(chapters)
+    if register:
+        state.view_reference_count += len(chapters)
     if len(set(chapters)) != len(chapters):
         _add_outline_error(state, path, line, "OL012", "同一单元格包含重复章节 ID")
     for chapter_id in chapters:
@@ -1325,7 +1365,12 @@ def _parse_view_chapters(
 
 
 def _parse_view_anchors(
-    value: str, path: str, line: int, state: _OutlineState
+    value: str,
+    path: str,
+    line: int,
+    state: _OutlineState,
+    *,
+    register: bool = True,
 ) -> tuple[str, ...]:
     anchors = _parse_controlled_list(value, OUTLINE_ANCHOR_RE)
     if anchors is None:
@@ -1333,20 +1378,24 @@ def _parse_view_anchors(
             state, path, line, "OL010", "派生视图锚点语法不符合批准合同"
         )
         return ()
-    state.view_reference_count += len(anchors)
+    if register:
+        state.view_reference_count += len(anchors)
     if len(set(anchors)) != len(anchors):
         _add_outline_error(state, path, line, "OL012", "同一单元格包含重复锚点")
-    state.anchor_references.extend((anchor, path, line) for anchor in anchors)
+    if register:
+        state.anchor_references.extend((anchor, path, line) for anchor in anchors)
     return anchors
 
 
 def _require_text(
     value: str, path: str, line: int, state: _OutlineState, field_name: str
-) -> None:
+) -> bool:
     if not value or _contains_html_break(value):
         _add_outline_error(
             state, path, line, "OL002", f"{field_name} 必须为单行非空文本"
         )
+        return False
+    return True
 
 
 def _expected_required_closure(state: _OutlineState) -> set[str]:
@@ -1374,7 +1423,7 @@ def _validate_route_table(
     weeks: list[int] = []
     mainline: list[tuple[str, int]] = []
     flexible: list[tuple[str, int]] = []
-    for position, row in enumerate(table.rows, start=1):
+    for row in table.rows:
         week_match = re.fullmatch(r"第 ([1-9]|1[0-2]) 周", row.cells[0])
         if week_match is None:
             _add_outline_error(
@@ -1382,23 +1431,44 @@ def _validate_route_table(
             )
         else:
             week = int(week_match.group(1))
-            if week in weeks:
+            if table.structure_valid and week in weeks:
                 _add_outline_error(state, table.path, row.line, "OL012", "周次重复")
             weeks.append(week)
-            if week != position:
+            if table.structure_valid and week != row.position:
                 _add_outline_error(
                     state,
                     table.path,
                     row.line,
                     "OL009",
-                    f"周次行顺序应为第 {position} 周",
+                    f"周次行顺序应为第 {row.position} 周",
                 )
-        main, _ = _parse_view_chapters(row.cells[1], table.path, row.line, state)
-        optional, _ = _parse_view_chapters(row.cells[2], table.path, row.line, state)
+        main, _ = _parse_view_chapters(
+            row.cells[1],
+            table.path,
+            row.line,
+            state,
+            register=table.structure_valid,
+        )
+        optional, _ = _parse_view_chapters(
+            row.cells[2],
+            table.path,
+            row.line,
+            state,
+            register=table.structure_valid,
+        )
         mainline.extend((chapter_id, row.line) for chapter_id in main)
         flexible.extend((chapter_id, row.line) for chapter_id in optional)
         _require_text(row.cells[3], table.path, row.line, state, "阶段成果")
-        _parse_view_anchors(row.cells[4], table.path, row.line, state)
+        _parse_view_anchors(
+            row.cells[4],
+            table.path,
+            row.line,
+            state,
+            register=table.structure_valid,
+        )
+
+    if not table.structure_valid:
+        return
 
     main_ids = [chapter_id for chapter_id, _ in mainline]
     flexible_ids = [chapter_id for chapter_id, _ in flexible]
@@ -1487,26 +1557,49 @@ def _validate_career_table(table: _ControlledTable, state: _OutlineState) -> Non
         _require_text(row.cells[0], table.path, row.line, state, "能力层级")
         _require_text(row.cells[1], table.path, row.line, state, "岗位方向")
         key = (row.cells[0], row.cells[1])
-        if key in keys:
+        if table.structure_valid and key in keys:
             _add_outline_error(state, table.path, row.line, "OL012", "职业路线能力项重复")
         keys.add(key)
         _parse_view_chapters(
-            row.cells[2], table.path, row.line, state, allow_empty=False
+            row.cells[2],
+            table.path,
+            row.line,
+            state,
+            allow_empty=False,
+            register=table.structure_valid,
         )
         _require_text(row.cells[3], table.path, row.line, state, "阶段成果")
-        _parse_view_anchors(row.cells[4], table.path, row.line, state)
+        _parse_view_anchors(
+            row.cells[4],
+            table.path,
+            row.line,
+            state,
+            register=table.structure_valid,
+        )
 
 
 def _validate_dependency_table(table: _ControlledTable, state: _OutlineState) -> None:
     seen: set[str] = set()
     for row in table.rows:
         later, _ = _parse_view_chapters(
-            row.cells[0], table.path, row.line, state, allow_empty=False
+            row.cells[0],
+            table.path,
+            row.line,
+            state,
+            allow_empty=False,
+            register=table.structure_valid,
         )
         prerequisites, _ = _parse_view_chapters(
-            row.cells[1], table.path, row.line, state, allow_empty=False
+            row.cells[1],
+            table.path,
+            row.line,
+            state,
+            allow_empty=False,
+            register=table.structure_valid,
         )
         _require_text(row.cells[2], table.path, row.line, state, "关系说明")
+        if not table.structure_valid:
+            continue
         if len(later) != 1:
             _add_outline_error(
                 state, table.path, row.line, "OL002", "后学章节单元格只能包含一个章节 ID"
@@ -1534,23 +1627,36 @@ def _validate_technology_table(table: _ControlledTable, state: _OutlineState) ->
     keys: set[str] = set()
     for row in table.rows:
         _require_text(row.cells[0], table.path, row.line, state, "技术主词")
-        if row.cells[0] in keys:
+        if table.structure_valid and row.cells[0] in keys:
             _add_outline_error(state, table.path, row.line, "OL012", "技术主词重复")
         keys.add(row.cells[0])
         if not row.cells[1]:
             _add_outline_error(state, table.path, row.line, "OL002", "别名不得为空")
-        _parse_view_chapters(row.cells[2], table.path, row.line, state, allow_empty=False)
+        _parse_view_chapters(
+            row.cells[2],
+            table.path,
+            row.line,
+            state,
+            allow_empty=False,
+            register=table.structure_valid,
+        )
 
 
 def _validate_incident_table(table: _ControlledTable, state: _OutlineState) -> None:
     keys: set[str] = set()
     for row in table.rows:
         _require_text(row.cells[0], table.path, row.line, state, "故障现象")
-        if row.cells[0] in keys:
+        if table.structure_valid and row.cells[0] in keys:
             _add_outline_error(state, table.path, row.line, "OL012", "故障现象重复")
         keys.add(row.cells[0])
-        _parse_view_chapters(row.cells[1], table.path, row.line, state, allow_empty=False)
-        _parse_view_chapters(row.cells[2], table.path, row.line, state, allow_empty=False)
+        _parse_view_chapters(
+            row.cells[1], table.path, row.line, state, allow_empty=False,
+            register=table.structure_valid,
+        )
+        _parse_view_chapters(
+            row.cells[2], table.path, row.line, state, allow_empty=False,
+            register=table.structure_valid,
+        )
         if not row.cells[3]:
             _add_outline_error(state, table.path, row.line, "OL002", "未来案例入口不得为空")
 
@@ -1559,12 +1665,18 @@ def _validate_role_table(table: _ControlledTable, state: _OutlineState) -> None:
     keys: set[str] = set()
     for row in table.rows:
         _require_text(row.cells[0], table.path, row.line, state, "岗位能力")
-        if row.cells[0] in keys:
+        if table.structure_valid and row.cells[0] in keys:
             _add_outline_error(state, table.path, row.line, "OL012", "岗位能力重复")
         keys.add(row.cells[0])
-        _parse_view_chapters(row.cells[1], table.path, row.line, state, allow_empty=False)
+        _parse_view_chapters(
+            row.cells[1], table.path, row.line, state, allow_empty=False,
+            register=table.structure_valid,
+        )
         _require_text(row.cells[2], table.path, row.line, state, "阶段成果")
-        _parse_view_anchors(row.cells[3], table.path, row.line, state)
+        _parse_view_anchors(
+            row.cells[3], table.path, row.line, state,
+            register=table.structure_valid,
+        )
 
 
 def _validate_wave_three_views(
@@ -1576,7 +1688,7 @@ def _validate_wave_three_views(
         table = _load_controlled_table(
             root, relative, headers, state, required=required
         )
-        if table is None or not table.structure_valid:
+        if table is None:
             continue
         if relative == "学习路线/02-三个月就业路线.md":
             _validate_route_table(table, state, strict=strict)
@@ -1601,11 +1713,55 @@ def _record_anchor_definition(
     state.anchor_definitions[anchor] = (path, line)
 
 
+def _project_owner_from_label(value: str) -> int | None:
+    match = re.fullmatch(r"项目 (0[1-5])", value)
+    return int(match.group(1)) if match is not None else None
+
+
+def _raw_project_key(value: str) -> str | None:
+    match = re.fullmatch(r"`(PRJ-\d{2}-M\d{2})`", value)
+    return match.group(1) if match is not None else None
+
+
+def _project_key_owner(value: str | None) -> int | None:
+    match = re.fullmatch(r"PRJ-(\d{2})-M\d{2}", value or "")
+    return int(match.group(1)) if match is not None else None
+
+
+def _expected_view_project_key(owner: int | None, raw_key: str | None) -> str | None:
+    suffix = re.search(r"(M\d{2})$", raw_key or "")
+    if owner is None or suffix is None:
+        return raw_key
+    return f"PRJ-{owner:02d}-{suffix.group(1)}"
+
+
+def _exclude_project_record(
+    state: _OutlineState,
+    *,
+    side: str,
+    owner: int | None,
+    raw_key: str | None,
+    expected_key: str | None,
+) -> None:
+    exclusion = _ProjectRecordExclusion(side, owner, raw_key, expected_key)
+    if exclusion not in state.project_record_exclusions:
+        state.project_record_exclusions.append(exclusion)
+
+
 def _validate_project_view(table: _ControlledTable, state: _OutlineState) -> bool:
     seen: set[str] = set()
-    milestones_comparable = True
     for row in table.rows:
-        _require_text(row.cells[0], table.path, row.line, state, "项目")
+        project_text_valid = _require_text(
+            row.cells[0], table.path, row.line, state, "项目"
+        )
+        owner = _project_owner_from_label(row.cells[0])
+        if project_text_valid and owner is None:
+            _add_outline_error(
+                state, table.path, row.line, "OL002", "项目必须为项目 01 至项目 05"
+            )
+            project_text_valid = False
+        raw_key = _raw_project_key(row.cells[1])
+        expected_key = _expected_view_project_key(owner, raw_key)
         anchors = _parse_controlled_list(row.cells[1], OUTLINE_ANCHOR_RE)
         if anchors is None or len(anchors) != 1 or not anchors[0].startswith("PRJ-"):
             _add_outline_error(
@@ -1616,35 +1772,62 @@ def _validate_project_view(table: _ControlledTable, state: _OutlineState) -> boo
                 "项目演进视图的里程碑必须是单个 PRJ-NN-MCC",
             )
             milestone = None
-            milestones_comparable = False
         else:
             milestone = anchors[0]
-            state.view_reference_count += 1
-            state.anchor_references.append((milestone, table.path, row.line))
-            if milestone in seen:
+            if owner is not None and _project_key_owner(milestone) != owner:
+                _add_outline_error(
+                    state,
+                    table.path,
+                    row.line,
+                    "OL010",
+                    f"项目演进视图里程碑应属于项目 {owner:02d}",
+                )
+                milestone = None
+            elif table.structure_valid and milestone in seen:
                 _add_outline_error(
                     state, table.path, row.line, "OL012", "项目演进视图里程碑重复"
                 )
-                milestones_comparable = False
-            seen.add(milestone)
+                milestone = None
+            else:
+                seen.add(milestone)
         parsed_chapters, chapters_valid = _parse_view_chapters(
-            row.cells[2], table.path, row.line, state, allow_empty=False
+            row.cells[2],
+            table.path,
+            row.line,
+            state,
+            allow_empty=False,
+            register=table.structure_valid,
         )
         chapters = set(parsed_chapters)
-        if not chapters_valid:
-            milestones_comparable = False
         _require_text(row.cells[3], table.path, row.line, state, "证据类型")
-        if milestone is not None and chapters_valid:
+        record_valid = (
+            table.structure_valid
+            and project_text_valid
+            and milestone is not None
+            and chapters_valid
+        )
+        if record_valid:
+            state.view_reference_count += 1
+            state.anchor_references.append((milestone, table.path, row.line))
             state.project_view_records.append(
                 (milestone, chapters, table.path, row.line)
             )
-    return milestones_comparable
+        elif table.structure_valid:
+            _exclude_project_record(
+                state,
+                side="view",
+                owner=owner,
+                raw_key=raw_key,
+                expected_key=expected_key,
+            )
+    return table.structure_valid
 
 
 def _validate_checkpoint_table(
     table: _ControlledTable, state: _OutlineState, *, require_all: bool
 ) -> None:
-    for position, row in enumerate(table.rows):
+    state.checkpoint_definitions_comparable = table.structure_valid
+    for row in table.rows:
         anchor_match = OUTLINE_ANCHOR_RE.fullmatch(row.cells[0])
         checkpoint = (
             anchor_match.group("value")
@@ -1667,8 +1850,10 @@ def _validate_checkpoint_table(
                 _add_outline_error(
                     state, table.path, row.line, "OL010", "检查点 ID 与阶段不对齐"
                 )
-            expected = f"{position:02d}"
-            if checkpoint != f"CP-{expected}" or stage_value != expected:
+            expected = f"{row.position - 1:02d}"
+            if table.structure_valid and (
+                checkpoint != f"CP-{expected}" or stage_value != expected
+            ):
                 _add_outline_error(
                     state,
                     table.path,
@@ -1677,13 +1862,24 @@ def _validate_checkpoint_table(
                     f"检查点定义应按 CP-{expected} 连续排序",
                 )
         _parse_view_chapters(
-            row.cells[2], table.path, row.line, state, allow_empty=False
+            row.cells[2],
+            table.path,
+            row.line,
+            state,
+            allow_empty=False,
+            register=table.structure_valid,
         )
-        _parse_view_anchors(row.cells[3], table.path, row.line, state)
+        _parse_view_anchors(
+            row.cells[3],
+            table.path,
+            row.line,
+            state,
+            register=table.structure_valid,
+        )
         _require_text(row.cells[4], table.path, row.line, state, "能力结果")
-        if checkpoint is not None:
+        if table.structure_valid and checkpoint is not None:
             _record_anchor_definition(checkpoint, table.path, row.line, state)
-    if require_all:
+    if require_all and table.structure_valid:
         actual = {
             anchor
             for anchor in state.anchor_definitions
@@ -1732,7 +1928,10 @@ def _validate_labs(root: Path, state: _OutlineState) -> None:
 def _validate_project_table(
     table: _ControlledTable, project: int, state: _OutlineState
 ) -> None:
-    for position, row in enumerate(table.rows, start=1):
+    if not table.structure_valid:
+        state.invalid_project_tables.add(project)
+    for row in table.rows:
+        raw_key = _raw_project_key(row.cells[0])
         anchor_match = OUTLINE_ANCHOR_RE.fullmatch(row.cells[0])
         milestone = (
             anchor_match.group("value")
@@ -1740,14 +1939,15 @@ def _validate_project_table(
             and anchor_match.group("value").startswith("PRJ-")
             else None
         )
-        expected = f"PRJ-{project:02d}-M{position:02d}"
-        milestone_valid = milestone == expected
+        expected = f"PRJ-{project:02d}-M{row.position:02d}"
+        owner_valid = milestone is not None and _project_key_owner(milestone) == project
+        sequence_valid = milestone == expected
         if milestone is None:
             _add_outline_error(
                 state, table.path, row.line, "OL010", "项目里程碑必须为反引号 PRJ-NN-MCC"
             )
         else:
-            if not milestone_valid:
+            if not owner_valid or (table.structure_valid and not sequence_valid):
                 _add_outline_error(
                     state,
                     table.path,
@@ -1755,21 +1955,37 @@ def _validate_project_table(
                     "OL010",
                     f"项目里程碑应连续且属于当前项目；预期 {expected}",
                 )
-            _record_anchor_definition(milestone, table.path, row.line, state)
         _require_text(row.cells[1], table.path, row.line, state, "能力结果")
         parsed_chapters, chapters_valid = _parse_view_chapters(
-            row.cells[2], table.path, row.line, state, allow_empty=False
+            row.cells[2],
+            table.path,
+            row.line,
+            state,
+            allow_empty=False,
+            register=table.structure_valid,
         )
         chapters = set(parsed_chapters)
         _require_text(row.cells[3], table.path, row.line, state, "证据类型")
         _require_text(row.cells[4], table.path, row.line, state, "未来内容归属")
-        if milestone_valid and chapters_valid and milestone is not None:
+        record_valid = (
+            table.structure_valid
+            and owner_valid
+            and sequence_valid
+            and chapters_valid
+            and milestone is not None
+        )
+        if record_valid:
+            _record_anchor_definition(milestone, table.path, row.line, state)
             state.project_mappings[milestone] = chapters
             state.project_locations[milestone] = (table.path, row.line)
-        elif milestone_valid and milestone is not None:
-            state.invalid_project_milestones.add(milestone)
-        else:
-            state.invalid_project_numbers.add(project)
+        elif table.structure_valid:
+            _exclude_project_record(
+                state,
+                side="project",
+                owner=project,
+                raw_key=raw_key,
+                expected_key=expected,
+            )
 
 
 def _validate_projects(root: Path, state: _OutlineState, *, required: bool) -> None:
@@ -1780,27 +1996,39 @@ def _validate_projects(root: Path, state: _OutlineState, *, required: bool) -> N
         table = _load_controlled_table(
             root, relative, PROJECT_HEADERS, state, required=required
         )
-        if table is not None and table.structure_valid:
+        if table is not None:
             _validate_project_table(table, project, state)
-        elif required or table is not None:
-            state.invalid_project_numbers.add(project)
+        elif required:
+            state.invalid_project_tables.add(project)
 
 
-def _project_anchor_is_qualified(anchor: str, state: _OutlineState) -> bool:
-    if not anchor.startswith("PRJ-"):
-        return True
-    match = re.match(r"PRJ-(\d{2})-", anchor)
-    if match is not None and int(match.group(1)) in state.invalid_project_numbers:
+def _project_record_is_excluded(
+    key: str, state: _OutlineState, *, side: str
+) -> bool:
+    return any(
+        exclusion.side == side and exclusion.matches(key)
+        for exclusion in state.project_record_exclusions
+    )
+
+
+def _project_side_is_comparable(key: str, state: _OutlineState) -> bool:
+    owner = _project_key_owner(key)
+    if owner is not None and owner in state.invalid_project_tables:
         return False
-    return anchor not in state.invalid_project_milestones
+    return not _project_record_is_excluded(key, state, side="project")
 
 
 def _validate_anchor_and_project_closure(state: _OutlineState) -> None:
     for anchor, path, line in state.anchor_references:
-        if (
-            _project_anchor_is_qualified(anchor, state)
-            and anchor not in state.anchor_definitions
+        if anchor in state.anchor_definitions:
+            continue
+        if anchor.startswith("CP-") and not state.checkpoint_definitions_comparable:
+            continue
+        if anchor.startswith("PRJ-") and not _project_side_is_comparable(
+            anchor, state
         ):
+            continue
+        if anchor not in state.anchor_definitions:
             _add_outline_error(
                 state, path, line, "OL010", f"引用的实践锚点 {anchor} 不存在"
             )
@@ -1821,9 +2049,10 @@ def _validate_anchor_and_project_closure(state: _OutlineState) -> None:
         for milestone in sorted(
             anchor for anchor in chapter.anchors if anchor.startswith("PRJ-")
         ):
-            if not _project_anchor_is_qualified(milestone, state):
+            mapping = state.project_mappings.get(milestone)
+            if mapping is None and not _project_side_is_comparable(milestone, state):
                 continue
-            if chapter.chapter_id not in state.project_mappings.get(milestone, set()):
+            if chapter.chapter_id not in (mapping or set()):
                 _add_outline_error(
                     state,
                     chapter.path,
@@ -1831,15 +2060,13 @@ def _validate_anchor_and_project_closure(state: _OutlineState) -> None:
                     "OL011",
                     f"章节引用 {milestone}，但项目未列回章节 {chapter.chapter_id}",
                 )
-    if (
-        state.project_view_milestones_comparable
-        and not state.invalid_project_numbers
-        and not state.invalid_project_milestones
-    ):
+    if state.project_view_milestones_comparable:
         view_milestones = {
             milestone for milestone, _, _, _ in state.project_view_records
         }
         for milestone in sorted(state.project_mappings.keys() - view_milestones):
+            if _project_record_is_excluded(milestone, state, side="view"):
+                continue
             path, line = state.project_locations[milestone]
             _add_outline_error(
                 state,
@@ -1849,8 +2076,6 @@ def _validate_anchor_and_project_closure(state: _OutlineState) -> None:
                 f"项目里程碑 {milestone} 未出现在贯穿项目视图",
             )
     for milestone, chapters, path, line in state.project_view_records:
-        if not _project_anchor_is_qualified(milestone, state):
-            continue
         mapping = state.project_mappings.get(milestone)
         if mapping is not None and chapters != mapping:
             _add_outline_error(
@@ -1870,12 +2095,12 @@ def _validate_partial_auxiliary_tables(root: Path, state: _OutlineState) -> None
         state,
         required=False,
     )
-    if project_view is not None and project_view.structure_valid:
+    if project_view is not None:
         _validate_project_view(project_view, state)
     checkpoint = _load_controlled_table(
         root, CHECKPOINT_PATH, CHECKPOINT_HEADERS, state, required=False
     )
-    if checkpoint is not None and checkpoint.structure_valid:
+    if checkpoint is not None:
         _validate_checkpoint_table(checkpoint, state, require_all=False)
     _validate_projects(root, state, required=False)
 
@@ -1888,14 +2113,14 @@ def _validate_complete(root: Path, state: _OutlineState) -> None:
         state,
         required=True,
     )
-    if project_view is not None and project_view.structure_valid:
+    if project_view is not None:
         state.project_view_milestones_comparable = _validate_project_view(
             project_view, state
         )
     checkpoint = _load_controlled_table(
         root, CHECKPOINT_PATH, CHECKPOINT_HEADERS, state, required=True
     )
-    if checkpoint is not None and checkpoint.structure_valid:
+    if checkpoint is not None:
         _validate_checkpoint_table(checkpoint, state, require_all=True)
     _validate_labs(root, state)
     _validate_projects(root, state, required=True)
