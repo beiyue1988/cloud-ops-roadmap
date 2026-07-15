@@ -21,3 +21,4 @@ ADR 状态由主会话更新。执行会话不得自行将决策设为 `accepted
 - [ADR-0003：采用 VitePress 作为默认文档站](ADR-0003-VitePress文档站.md)：保持 Markdown 单一正文源，具体构建依赖按阶段核定；
 - [ADR-0004：采用 Kubernetes 1.36 教学基线](ADR-0004-Kubernetes-1.36教学基线.md)：固定 minor、kubeadm、运行时、cgroup 与 CNI 组合；
 - [ADR-0005：固定 RuoYi-Vue v3.9.2 教学基线](ADR-0005-RuoYi-Vue-v3.9.2教学基线.md)：固定 release tag、commit、上游和第三方许可证边界。
+- [ADR-0006：采用 VMware Workstation Pro 26H1 作为阶段 03 本地实验基线](ADR-0006-VMware-Workstation-Pro-26H1实验基线.md)：锁定产品、日历发布线与 Windows x86-64 主宿主边界，保留动态 build 和环境验证门。
