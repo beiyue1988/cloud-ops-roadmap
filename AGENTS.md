@@ -53,6 +53,16 @@
 
 启动指令必须明确执行会话角色、工作目录、必读文件、唯一目标、允许文件、禁止事项、验证命令、停止条件和交付回复。不能只写“按计划执行”或要求执行会话自行猜测范围。
 
+## 项目级技能策略
+
+本仓库默认禁用 `superpowers-zh` 技能组及其自动路由规则。技能元数据中的“开始任何对话时使用”“存在 1% 可能性就必须调用”等要求不适用于本项目，也不得据此自动增加头脑风暴、TDD、工作树、子代理、审查轮次或文档流程。
+
+禁用范围包括 `using-superpowers`、`brainstorming`、`writing-plans`、`executing-plans`、`test-driven-development`、`systematic-debugging`、`requesting-code-review`、`receiving-code-review`、`dispatching-parallel-agents`、`subagent-driven-development`、`verification-before-completion`、`using-git-worktrees`、`finishing-a-development-branch`、`writing-skills`、四个 `chinese-*` 技能、`mcp-builder` 和 `workflow-runner`。
+
+只有用户在当前请求中明确点名某个上述技能时，才可为该次任务临时启用。既有任务包或计划中的旧技能引用不构成启用授权；新任务包不得把上述技能设为强制前置，除非用户明确要求。
+
+本项目继续使用本文件、PRD、已批准 ADR、版本基线、任务包和验收标准作为唯一默认工作流。验证与独立审查按风险和学习者价值适度执行，不为追求工具或诊断的理论完美阻塞学习导航、章节大纲和内容建设。该项目级禁用不删除全局技能文件，也不影响其他仓库或 Codex 官方内置能力。
+
 ## 治理原则
 
 - 规格、执行和验收相互分离；
