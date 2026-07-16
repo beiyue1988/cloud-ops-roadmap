@@ -18,3 +18,8 @@
 
 - [Phase 0 独立审查报告](Phase-0-独立审查报告.md)：独立审查会话对固定截止对象给出的 `recommend-accept` 建议，不替代主会话裁决。
 - [Phase 0 最终验收报告](Phase-0-最终验收报告.md)：主会话复验 P0-05、P0-06 与动态门禁后作出的最终裁决。
+
+## Phase 1 阶段记录
+
+- [Phase 1 独立审查报告](Phase-1-独立审查报告.md)：独立审查会话对完整导航与大纲基线给出的 `recommend-accept` 建议。
+- [Phase 1 最终验收报告](Phase-1-最终验收报告.md)：主会话 fresh 复验 16 项最终标准后作出的 `accepted` 裁决与有限 Phase 2 解锁边界。
