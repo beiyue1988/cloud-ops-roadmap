@@ -57,14 +57,14 @@
 | `15.26` | `15.26-canary渐进交付指标与停止条件.md` | canary、渐进交付、指标与停止条件 | 使用指标判断和停止条件界定 canary 渐进交付的推进与回退 | `methodology` | `15.25` | 90–120 分钟 | 就业后补学 | `CP-15`, `LAB-L3` |
 | `15.27` | `15.27-数据库迁移兼容性与发布顺序.md` | 数据库迁移、兼容性与发布顺序 | 根据向前向后兼容关系规划数据库迁移与应用发布顺序 | `methodology` | `15.26` | 90–120 分钟 | 就业后补学 | `CP-15`, `LAB-L3` |
 | `15.28` | `15.28-发布审批变更窗口与证据包.md` | 发布审批、变更窗口与证据包 | 组织发布审批、变更记录、窗口、责任分离和审计证据包 | `methodology` | `15.27` | 90–120 分钟 | 就业后补学 | `CP-15`, `LAB-L3` |
-| `15.29` | `15.29-rollback-roll-forward与恢复决策.md` | rollback、roll-forward 与恢复决策 | 结合已验证制品 promotion 判断 rollback、roll-forward 和恢复路径 | `methodology` | `15.28` | 90–120 分钟 | 就业后补学 | `CP-15`, `LAB-L3` |
-| `15.30` | `15.30-Kubernetes交付rollout与rollback.md` | Kubernetes 交付、rollout 与 rollback | 将已验证制品交付到 Kubernetes 并界定 rollout、status 和 rollback 自动化边界 | `methodology` | `14.44`, `15.29` | 90–120 分钟 | 就业后补学 | `CP-15`, `LAB-L3` |
+| `15.29` | `15.29-rollback-roll-forward与恢复决策.md` | rollback、roll-forward 与恢复决策 | 结合已验证制品 promotion 判断 rollback、roll-forward 和恢复路径 | `methodology` | `15.28` | 90–120 分钟 | 就业后补学 | `CP-15`, `LAB-L3`, `PRJ-03-M04` |
+| `15.30` | `15.30-Kubernetes交付rollout与rollback.md` | Kubernetes 交付、rollout 与 rollback | 将已验证制品交付到 Kubernetes 并界定 rollout、status 和 rollback 自动化边界 | `methodology` | `14.44`, `15.29` | 90–120 分钟 | 就业后补学 | `CP-15`, `LAB-L3`, `PRJ-03-M03` |
 | `15.31` | `15.31-GitOps-reconcile期望状态与drift边界.md` | GitOps reconcile、期望状态与 drift 边界 | 解释 GitOps 的 desired state、reconcile 和 drift 并保留产品选型边界 | `principle` | `15.30` | 60–90 分钟 | 就业后补学 | `CP-15`, `LAB-L3` |
 | `15.32` | `15.32-Jenkins-controller-agent与Pipeline适配.md` | Jenkins controller、agent 与 Pipeline 适配 | 将平台中立交付语义映射到 Jenkins controller、agent、Jenkinsfile、plugin 和 credentials | `tool` | `15.31` | 90–120 分钟 | 就业后补学 | `CP-15`, `LAB-L3` |
 | `15.33` | `15.33-GitLab-pipeline-runner与environment适配.md` | GitLab pipeline、runner 与 environment 适配 | 将平台中立交付语义映射到 GitLab pipeline、job、runner、environment、variable 和 component | `tool` | `15.31` | 90–120 分钟 | 就业后补学 | `CP-15`, `LAB-L3` |
 | `15.34` | `15.34-GitHub-workflow-runner与permission适配.md` | GitHub workflow、runner 与 permission 适配 | 将平台中立交付语义映射到 GitHub workflow、job、runner、environment、secret、permission 和 action | `tool` | `15.31` | 90–120 分钟 | 就业后补学 | `CP-15`, `LAB-L3` |
 | `15.35` | `15.35-平台托管runner生态权限成本选择门.md` | 平台、托管、runner、生态、权限与成本选择门 | 依据可迁移合同评估平台、托管方式、runner、插件生态、权限与成本 | `methodology` | `15.32`, `15.33`, `15.34` | 90–120 分钟 | 就业后补学 | `CP-15`, `LAB-L3` |
-| `15.36` | `15.36-可回滚交付与排障完整闭环.md` | 可回滚交付与排障完整闭环 | 汇合提交、验证、制品、供应链、环境、发布、回退和排障形成完整交付闭环 | `methodology` | `15.35` | 90–120 分钟 | 就业后补学 | `CP-15`, `LAB-L3` |
+| `15.36` | `15.36-可回滚交付与排障完整闭环.md` | 可回滚交付与排障完整闭环 | 汇合提交、验证、制品、供应链、环境、发布、回退和排障形成完整交付闭环 | `methodology` | `15.35` | 90–120 分钟 | 就业后补学 | `CP-15`, `LAB-L3`, `PRJ-03-M04` |
 
 ## 导航
 

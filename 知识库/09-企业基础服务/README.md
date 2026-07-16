@@ -30,21 +30,21 @@
 
 | 章节 ID | 预定文件 | 标题 | 主要目标 | type | 直接前置 | 建议投入 | 就业标签 | 实践锚点 |
 |---|---|---|---|---|---|---|---|---|
-| `09.01` | `09.01-企业服务依赖责任与变更边界.md` | 企业服务依赖、责任与变更边界 | 从依赖链、可用性和变更风险界定企业服务的运维责任 | `methodology` | `08.17` | 30–60 分钟 | 必须学 | `CP-09` |
-| `09.02` | `09.02-服务身份配置日志安全与恢复证据.md` | 服务身份、配置、日志、安全与恢复证据 | 用身份、端口、名称、时间、配置、日志、安全和恢复状态建立服务证据底座 | `methodology` | `09.01` | 60–90 分钟 | 必须学 | `CP-09`, `LAB-L1` |
+| `09.01` | `09.01-企业服务依赖责任与变更边界.md` | 企业服务依赖、责任与变更边界 | 从依赖链、可用性和变更风险界定企业服务的运维责任 | `methodology` | `08.17` | 30–60 分钟 | 必须学 | `CP-09`, `PRJ-01-M01` |
+| `09.02` | `09.02-服务身份配置日志安全与恢复证据.md` | 服务身份、配置、日志、安全与恢复证据 | 用身份、端口、名称、时间、配置、日志、安全和恢复状态建立服务证据底座 | `methodology` | `09.01` | 60–90 分钟 | 必须学 | `CP-09`, `LAB-L1`, `PRJ-01-M01` |
 | `09.03` | `09.03-Nginx进程模块上下文与请求阶段.md` | Nginx 进程、模块、上下文与请求阶段 | 解释 master、worker、模块、配置上下文和请求处理阶段之间的运行关系 | `service` | `09.02` | 60–90 分钟 | 必须学 | `CP-09`, `LAB-L1` |
 | `09.04` | `09.04-Nginx来源版本与生命周期边界.md` | Nginx 来源、版本与生命周期边界 | 根据软件来源、版本核定和服务生命周期责任规划 Nginx 部署入口 | `service` | `09.03` | 60–90 分钟 | 必须学 | `CP-09`, `LAB-L1` |
-| `09.05` | `09.05-虚拟主机location与静态内容.md` | 虚拟主机、location 与静态内容 | 关联 HTTP server、虚拟主机、location 匹配和静态内容形成请求落点模型 | `service` | `09.04` | 60–90 分钟 | 必须学 | `CP-09`, `LAB-L1` |
-| `09.06` | `09.06-反向代理身份header与传输边界.md` | 反向代理、身份、header 与传输边界 | 解释代理中的客户端身份、header、timeout 和 buffering 对请求链的影响 | `service` | `09.05` | 90–120 分钟 | 必须学 | `CP-09`, `LAB-L2` |
+| `09.05` | `09.05-虚拟主机location与静态内容.md` | 虚拟主机、location 与静态内容 | 关联 HTTP server、虚拟主机、location 匹配和静态内容形成请求落点模型 | `service` | `09.04` | 60–90 分钟 | 必须学 | `CP-09`, `LAB-L1`, `PRJ-01-M02` |
+| `09.06` | `09.06-反向代理身份header与传输边界.md` | 反向代理、身份、header 与传输边界 | 解释代理中的客户端身份、header、timeout 和 buffering 对请求链的影响 | `service` | `09.05` | 90–120 分钟 | 必须学 | `CP-09`, `LAB-L2`, `PRJ-01-M02` |
 | `09.07` | `09.07-upstream负载均衡与失败判断.md` | upstream、负载均衡与失败判断 | 根据 upstream、负载算法、失败处理和健康信号判断后端流量分配状态 | `service` | `09.06` | 90–120 分钟 | 必须学 | `CP-09`, `LAB-L2` |
 | `09.08` | `09.08-TLS证书链SNI与终止责任.md` | TLS 证书链、SNI 与终止责任 | 界定证书链、SNI、协议、TLS 终止位置和证书更新责任 | `principle` | `09.07` | 90–120 分钟 | 必须学 | `CP-09`, `LAB-L2` |
-| `09.09` | `09.09-Nginx验证reload排空与回滚证据.md` | Nginx 验证、reload、排空与回滚证据 | 组织配置验证、reload、连接排空、回滚和变更后复验的证据链 | `methodology` | `09.08` | 90–120 分钟 | 必须学 | `CP-09`, `LAB-L2` |
+| `09.09` | `09.09-Nginx验证reload排空与回滚证据.md` | Nginx 验证、reload、排空与回滚证据 | 组织配置验证、reload、连接排空、回滚和变更后复验的证据链 | `methodology` | `09.08` | 90–120 分钟 | 必须学 | `CP-09`, `LAB-L2`, `PRJ-01-M03` |
 | `09.10` | `09.10-Nginx日志状态与分层定位.md` | Nginx 日志、状态与分层定位 | 使用 access log、error log 和状态信号定位请求链故障并界定持续监控边界 | `methodology` | `09.09` | 90–120 分钟 | 必须学 | `CP-09`, `LAB-L1` |
 | `09.11` | `09.11-Nginx最小暴露权限与资源证据.md` | Nginx 最小暴露、权限与资源证据 | 从暴露面、运行权限和资源信号形成 Nginx 安全与性能优化证据边界 | `methodology` | `09.10` | 90–120 分钟 | 必须学 | `CP-09`, `LAB-L2` |
-| `09.12` | `09.12-JDK-JRE-JVM与Java制品运行.md` | JDK、JRE、JVM 与 Java 制品运行 | 区分 JDK、JRE、JVM、class、jar 和 Java 进程并承担版本选择责任 | `principle` | `09.02` | 60–90 分钟 | 必须学 | `CP-09`, `LAB-L1` |
+| `09.12` | `09.12-JDK-JRE-JVM与Java制品运行.md` | JDK、JRE、JVM 与 Java 制品运行 | 区分 JDK、JRE、JVM、class、jar 和 Java 进程并承担版本选择责任 | `principle` | `09.02` | 60–90 分钟 | 必须学 | `CP-09`, `LAB-L1`, `PRJ-01-M01` |
 | `09.13` | `09.13-JVM内存GC线程与资源边界.md` | JVM 内存、GC、线程与资源边界 | 关联 JVM 内存、GC、线程和参数与主机资源之间的运行边界 | `principle` | `09.12` | 60–90 分钟 | 必须学 | `CP-09`, `LAB-L1` |
-| `09.14` | `09.14-Spring-Boot外部配置与systemd托管.md` | Spring Boot 外部配置与 systemd 托管 | 组织 profile、外部配置、Secret、嵌入式服务器和 systemd 托管的运行责任 | `service` | `09.13` | 90–120 分钟 | 必须学 | `CP-09`, `LAB-L2` |
-| `09.15` | `09.15-RuoYi-Web-Java核心证据闭环.md` | RuoYi Web 与 Java 核心证据闭环 | 汇合 RuoYi-Vue v3.9.2 后端运行、Nginx 接入和验证证据形成就业核心闭环 | `methodology` | `09.11`, `09.14` | 90–120 分钟 | 必须学 | `CP-09`, `LAB-L2` |
+| `09.14` | `09.14-Spring-Boot外部配置与systemd托管.md` | Spring Boot 外部配置与 systemd 托管 | 组织 profile、外部配置、Secret、嵌入式服务器和 systemd 托管的运行责任 | `service` | `09.13` | 90–120 分钟 | 必须学 | `CP-09`, `LAB-L2`, `PRJ-01-M01` |
+| `09.15` | `09.15-RuoYi-Web-Java核心证据闭环.md` | RuoYi Web 与 Java 核心证据闭环 | 汇合 RuoYi-Vue v3.9.2 后端运行、Nginx 接入和验证证据形成就业核心闭环 | `methodology` | `09.11`, `09.14` | 90–120 分钟 | 必须学 | `CP-09`, `LAB-L2`, `PRJ-01-M02` |
 | `09.16` | `09.16-外置Tomcat与Jakarta兼容边界.md` | 外置 Tomcat 与 Jakarta 兼容边界 | 判断外置 Tomcat 的适用场景并核对 Servlet、Jakarta 命名空间与安全兼容责任 | `service` | `09.14` | 60–90 分钟 | 建议学 | `CP-09`, `LAB-L2` |
 | `09.17` | `09.17-DNS角色缓存与开放递归风险.md` | DNS 角色、缓存与开放递归风险 | 区分 authoritative、recursive、stub 和 cache 角色并识别开放递归风险 | `principle` | `09.02` | 60–90 分钟 | 建议学 | `CP-09`, `LAB-L1` |
 | `09.18` | `09.18-DNS命名空间zone委派与解析链.md` | DNS 命名空间、zone、委派与解析链 | 关联 namespace、zone、delegation、常用记录、TTL 和逐级解析过程 | `principle` | `09.17` | 60–90 分钟 | 建议学 | `CP-09`, `LAB-L1` |

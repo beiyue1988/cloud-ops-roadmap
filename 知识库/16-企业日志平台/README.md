@@ -34,15 +34,15 @@
 | `16.01` | `16.01-单机日志与集中平台职责边界.md` | 单机日志与集中平台职责边界 | 区分单机日志与集中日志平台的 SLA、共享责任和证据边界 | `concept` | `06.26` | 30–60 分钟 | 就业后补学 | `CP-16` |
 | `16.02` | `16.02-日志事件记录字段流与事件身份.md` | 日志事件、记录、字段、流与事件身份 | 区分 log event、source、record、field 和 stream 并建立事件身份 | `principle` | `16.01` | 60–90 分钟 | 就业后补学 | `CP-16` |
 | `16.03` | `16.03-source-collector-transport-processor-store-query管道.md` | source、collector、transport、processor、store 与 query 管道 | 使用六层角色建立与产品无关的集中日志管道模型 | `principle` | `16.02` | 60–90 分钟 | 就业后补学 | `CP-16` |
-| `16.04` | `16.04-时间主机服务容器与correlation-ID身份.md` | 时间、主机、服务、容器与 correlation ID 身份 | 关联 timestamp、timezone、host、service、container 和 correlation ID 形成可追踪事件身份 | `principle` | `16.02` | 60–90 分钟 | 就业后补学 | `CP-16` |
-| `16.05` | `16.05-文本JSON-schema字段命名与演进.md` | 文本、JSON、schema、字段命名与演进 | 区分文本与 JSON 日志并建立可演进的 schema 和字段命名边界 | `principle` | `16.04` | 60–90 分钟 | 就业后补学 | `CP-16` |
+| `16.04` | `16.04-时间主机服务容器与correlation-ID身份.md` | 时间、主机、服务、容器与 correlation ID 身份 | 关联 timestamp、timezone、host、service、container 和 correlation ID 形成可追踪事件身份 | `principle` | `16.02` | 60–90 分钟 | 就业后补学 | `CP-16`, `PRJ-04-M01` |
+| `16.05` | `16.05-文本JSON-schema字段命名与演进.md` | 文本、JSON、schema、字段命名与演进 | 区分文本与 JSON 日志并建立可演进的 schema 和字段命名边界 | `principle` | `16.04` | 60–90 分钟 | 就业后补学 | `CP-16`, `PRJ-04-M01` |
 | `16.06` | `16.06-multiline-encoding截断与解析失败.md` | multiline、encoding、截断与解析失败 | 判断多行、编码、截断、超长事件和解析失败对事件边界的影响 | `principle` | `16.05` | 60–90 分钟 | 就业后补学 | `CP-16` |
 | `16.07` | `16.07-敏感日志最小化脱敏租户权限与审计.md` | 敏感日志最小化、脱敏、租户、权限与审计 | 从采集前最小化、脱敏、租户隔离和最小权限界定敏感日志治理边界 | `methodology` | `16.05` | 90–120 分钟 | 就业后补学 | `CP-16` |
 | `16.08` | `16.08-agent-daemon-sidecar-DaemonSet与gateway拓扑.md` | agent、daemon、sidecar、DaemonSet 与 gateway 拓扑 | 比较 agent、daemon、sidecar、DaemonSet 和 gateway 的采集职责与故障域 | `principle` | `16.03`, `16.07` | 90–120 分钟 | 就业后补学 | `CP-16`, `LAB-L3` |
 | `16.09` | `16.09-Filebeat-input-harvester-registry与output边界.md` | Filebeat input、harvester、registry 与 output 边界 | 解释 Filebeat input、harvester、registry 和 output 的职责及 Elastic 输出边界 | `tool` | `16.08` | 90–120 分钟 | 就业后补学 | `CP-16`, `LAB-L3` |
 | `16.10` | `16.10-Fluent-Bit-input-filter-buffer与output边界.md` | Fluent Bit input、filter、buffer 与 output 边界 | 解释 Fluent Bit input、filter、buffer 和 output 的职责及多后端边界 | `tool` | `16.08` | 90–120 分钟 | 就业后补学 | `CP-16`, `LAB-L3` |
-| `16.11` | `16.11-Kubernetes节点文件runtime-metadata与采集拓扑.md` | Kubernetes 节点文件、runtime、metadata 与采集拓扑 | 关联节点日志文件、容器 runtime、metadata 和 DaemonSet 形成 Kubernetes 采集拓扑 | `methodology` | `14.44`, `16.08` | 90–120 分钟 | 就业后补学 | `CP-16`, `LAB-L3` |
-| `16.12` | `16.12-offset-checkpoint-state与重复丢失边界.md` | offset、checkpoint、state 与重复丢失边界 | 关联采集状态、文件轮转、重复、丢失和幂等形成可验证的读取边界 | `principle` | `16.06`, `16.09`, `16.10`, `16.11` | 90–120 分钟 | 就业后补学 | `CP-16`, `LAB-L3` |
+| `16.11` | `16.11-Kubernetes节点文件runtime-metadata与采集拓扑.md` | Kubernetes 节点文件、runtime、metadata 与采集拓扑 | 关联节点日志文件、容器 runtime、metadata 和 DaemonSet 形成 Kubernetes 采集拓扑 | `methodology` | `14.44`, `16.08` | 90–120 分钟 | 就业后补学 | `CP-16`, `LAB-L3`, `PRJ-04-M03` |
+| `16.12` | `16.12-offset-checkpoint-state与重复丢失边界.md` | offset、checkpoint、state 与重复丢失边界 | 关联采集状态、文件轮转、重复、丢失和幂等形成可验证的读取边界 | `principle` | `16.06`, `16.09`, `16.10`, `16.11` | 90–120 分钟 | 就业后补学 | `CP-16`, `LAB-L3`, `PRJ-04-M03` |
 | `16.13` | `16.13-buffer-backpressure-batch-retry与delivery.md` | buffer、backpressure、batch、retry 与 delivery | 解释缓冲、背压、批次、重试和 delivery 语义如何影响重复、丢失与乱序 | `principle` | `16.12` | 90–120 分钟 | 就业后补学 | `CP-16`, `LAB-L3` |
 | `16.14` | `16.14-网络TLS认证授权压缩与传输失败.md` | 网络、TLS、认证、授权、压缩与传输失败 | 从网络、TLS、身份、权限和压缩界定日志传输安全及失败证据 | `methodology` | `16.13` | 90–120 分钟 | 就业后补学 | `CP-16`, `LAB-L3` |
 | `16.15` | `16.15-Logstash-input-filter-output-pipeline与worker.md` | Logstash input、filter、output、pipeline 与 worker | 解释 Logstash pipeline、plugin 和 worker 的处理职责与并发边界 | `tool` | `16.14` | 90–120 分钟 | 就业后补学 | `CP-16`, `LAB-L3` |
